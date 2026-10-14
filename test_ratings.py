@@ -19,9 +19,12 @@ def windows_path(path):
     return 'Z:' + path.replace('/', '\\')
 
 
-execute('MenuTest.exe',
-        windows_path('/run/media/deck/share/fxtz/th123/modules/SokuLobbiesMod/SokuLobbiesMod.dll'),
-        windows_path('/home/deck/SokuLobbiesMod-0.7.5.0-backup-20260920/SokuLobbiesMod.dll'))
+current_lobby = '/run/media/deck/share/fxtz/th123/modules/SokuLobbiesMod/SokuLobbiesMod.dll'
+old_lobby = os.path.join(ROOT, 'test_fixtures', 'SokuLobbiesMod-0.7.5.0.dll')
+menu_args = [windows_path(current_lobby)]
+if os.path.isfile(old_lobby):
+    menu_args.append(windows_path(old_lobby))
+execute('MenuTest.exe', *menu_args)
 execute('RatingTest.exe')
 execute('RatingTest.exe', '--claim')
 if os.path.exists('/tmp/soku-rating.json'):

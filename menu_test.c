@@ -47,10 +47,9 @@ int main(int argc, char **argv)
     assert(!wcscmp(character_name_zh("reimu"), L"灵梦"));
     assert(!wcscmp(character_name_zh("youmu"), L"妖梦"));
     assert(!wcscmp(character_name_zh("yuyuko"), L"幽幽子"));
-    if (argc == 3) {
+    if (argc >= 2) {
         HMODULE current = LoadLibraryExA(argv[1], NULL, DONT_RESOLVE_DLL_REFERENCES);
-        HMODULE older = LoadLibraryExA(argv[2], NULL, DONT_RESOLVE_DLL_REFERENCES);
-        assert(current && older);
+        assert(current);
         assert(supported_lobby(current));
         lobby_module = current;
         void **current_vtable = (void **)((unsigned char *)current + LOBBY_MENU_VTABLE_RVA);
@@ -58,9 +57,14 @@ int main(int argc, char **argv)
             fprintf(stderr, "vtable at %p: %p %p %p %p (base %p)\n", (void *)current_vtable,
                 current_vtable[0], current_vtable[1], current_vtable[2], current_vtable[3], (void *)current);
         assert(verified_menu_vtable(current_vtable));
-        assert(!supported_lobby(older));
+        if (argc >= 3) {
+            HMODULE older = LoadLibraryExA(argv[2], NULL, DONT_RESOLVE_DLL_REFERENCES);
+            assert(older);
+            assert(!supported_lobby(older));
+            FreeLibrary(older);
+        }
         lobby_module = NULL;
-        FreeLibrary(current); FreeLibrary(older);
+        FreeLibrary(current);
         puts("lobby SHA-256 gate: OK");
     }
     unsigned char lobby_data[0x2000] = {0};
