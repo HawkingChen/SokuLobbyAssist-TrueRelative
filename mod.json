@@ -3,7 +3,7 @@
   "author": "凹帝",
   "version": "0.7.7",
   "priority": "-60000",
-  "description": "在东方绯想天则国内联机大厅显示玩家等级分和相对等级。数据来源：soku.cleista.cc 评分榜，每24小时更新并本地缓存。快捷键：F7显示/隐藏相对等级（默认显示）；F8手动切换附近玩家详情（自动模式关闭时）；F9切换自己的评分框；F10切换自动模式和自己的评分框。",
+  "description": "在东方非想天则（Touhou 12.3）联机大厅显示玩家评分和相对等级。数据来自 soku.cleista.cc。",
   "main": "TrueRelative.dll",
   "fileName": "TrueRelative.dll",
   "configFiles": ["SokuLobbyAssist.ini", "relative-levels.txt"],
