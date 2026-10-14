@@ -4,8 +4,6 @@
 
 评分数据来自 [soku.cleista.cc](https://soku.cleista.cc/)。
 
-支持简体中文联机大厅 0.7.5.2 和 0.7.5.4；插件会校验大厅 DLL，其他版本不会启用。
-
 ## 安装
 
 可通过 SokuLauncher 的“设置 - 下载”安装，也可以将安装包解压到游戏的 `modules` 目录。
