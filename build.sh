@@ -22,5 +22,5 @@ cp build/TrueRelative.dll mod.json SokuLobbyAssist.ini relative-levels.txt ratin
   third_party/curl/curl-ca-bundle.crt third_party/curl/COPYING.txt '相对等级阈值说明.txt' build/package/
 mkdir -p build/launcher-package/SokuLobbyAssist
 cp build/package/* build/launcher-package/SokuLobbyAssist/
-rm -f build/TrueRelative-0.7.7-install.zip
-(cd build/launcher-package && zip -qr ../TrueRelative-0.7.7-install.zip SokuLobbyAssist)
+rm -f build/TrueRelative-0.7.8-install.zip
+(cd build/launcher-package && zip -qr ../TrueRelative-0.7.8-install.zip SokuLobbyAssist)
