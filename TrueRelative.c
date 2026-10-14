@@ -182,6 +182,15 @@ static bool player_name(const unsigned char *player, char out[129])
     memcpy(out, source, size); out[size] = 0;
     return true;
 }
+static bool same_rating_name(const char *first, const char *second)
+{
+    while (*first == ' ') ++first;
+    while (*second == ' ') ++second;
+    size_t first_len = strlen(first), second_len = strlen(second);
+    while (first_len && first[first_len - 1] == ' ') --first_len;
+    while (second_len && second[second_len - 1] == ' ') --second_len;
+    return first_len == second_len && !memcmp(first, second, first_len);
+}
 static unsigned copy_players(void *menu, VisiblePlayer out[256])
 {
     unsigned char *object = menu;
@@ -541,7 +550,7 @@ static void draw_ratings(IDirect3DDevice9 *device, void *menu)
         if (!pinned_own && (avatar_x < -16 || avatar_x > 656 || avatar_y < -16 || avatar_y > 520)) continue;
         int duplicates = 0;
         for (unsigned j = 0; j < count; ++j)
-            if (!strcmp(players[i].name, players[j].name)) ++duplicates;
+            if (same_rating_name(players[i].name, players[j].name)) ++duplicates;
         RatingMatch match;
         bool found = false;
         if (own && own_account[0]) found = ratings_lookup_public(own_account, &match);
@@ -549,14 +558,14 @@ static void draw_ratings(IDirect3DDevice9 *device, void *menu)
             char handle[65];
             bool claimed = ratings_own_claim(players[i].name, handle);
             if (claimed)
-                found = ratings_lookup_public(handle, &match);
+                found = ratings_lookup_handle(handle, &match);
             else if (duplicates == 1) found = ratings_lookup(players[i].name, &match);
         } else if (duplicates == 1) {
             found = ratings_lookup(players[i].name, &match);
             if (!found) {
                 char handle[65];
                 if (ratings_other_claim(players[i].name, handle))
-                    found = ratings_lookup_public(handle, &match);
+                    found = ratings_lookup_handle(handle, &match);
             }
         }
         int width = detailed ? 206 : 180;

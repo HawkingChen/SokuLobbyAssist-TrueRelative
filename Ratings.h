@@ -16,6 +16,7 @@ typedef struct {
 void ratings_start(HMODULE plugin);
 bool ratings_lookup(const char *profile_utf8, RatingMatch *out);
 bool ratings_lookup_public(const char *public_name, RatingMatch *out);
+bool ratings_lookup_handle(const char *handle, RatingMatch *out);
 bool ratings_own_claim(const char *profile_utf8, char handle[65]);
 bool ratings_other_claim(const char *profile_utf8, char handle[65]);
 

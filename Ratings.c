@@ -649,7 +649,7 @@ void ratings_start(HMODULE plugin)
     HANDLE thread = CreateThread(NULL, 0, ratings_worker, NULL, 0, NULL);
     if (thread) CloseHandle(thread);
 }
-static bool lookup(const char *profile_utf8, const char *public_name, RatingMatch *out)
+static bool lookup(const char *profile_utf8, const char *public_name, bool handle_only, RatingMatch *out)
 {
     memset(out, 0, sizeof(*out));
     if (!started || (!public_name && (!profile_utf8 || !*profile_utf8))) return false;
@@ -658,7 +658,7 @@ static bool lookup(const char *profile_utf8, const char *public_name, RatingMatc
     if (!mapped) for (unsigned i = 0; i < manual_count; ++i)
         if (!strcmp(profile_utf8, manual[i].profile)) { mapped = manual[i].target; break; }
     int found = -1, matches = 0;
-    for (int pass = mapped ? 0 : 2; pass <= (mapped ? 1 : 3); ++pass) {
+    for (int pass = mapped ? 0 : 2; pass <= (mapped ? (handle_only ? 0 : 1) : 3); ++pass) {
         found = -1; matches = 0;
         for (unsigned i = 0; i < record_count; ++i) {
             bool yes = pass == 0 ? (records[i].handle[0] && !strcmp(records[i].handle, mapped)) :
@@ -687,10 +687,26 @@ static bool lookup(const char *profile_utf8, const char *public_name, RatingMatc
 }
 bool ratings_lookup(const char *profile_utf8, RatingMatch *out)
 {
-    return lookup(profile_utf8, NULL, out);
+    if (lookup(profile_utf8, NULL, false, out)) return true;
+    if (!profile_utf8) return false;
+    const char *start = profile_utf8;
+    while (*start == ' ') ++start;
+    size_t length = strlen(start);
+    while (length && start[length - 1] == ' ') --length;
+    if (!length || (start == profile_utf8 && length == strlen(profile_utf8)) || length >= 129)
+        return false;
+    char trimmed[129];
+    memcpy(trimmed, start, length);
+    trimmed[length] = 0;
+    return lookup(trimmed, NULL, false, out);
 }
 bool ratings_lookup_public(const char *public_name, RatingMatch *out)
 {
     if (!public_name || !*public_name) { memset(out, 0, sizeof(*out)); return false; }
-    return lookup(NULL, public_name, out);
+    return lookup(NULL, public_name, false, out);
+}
+bool ratings_lookup_handle(const char *handle, RatingMatch *out)
+{
+    if (!handle || !*handle) { memset(out, 0, sizeof(*out)); return false; }
+    return lookup(NULL, handle, true, out);
 }

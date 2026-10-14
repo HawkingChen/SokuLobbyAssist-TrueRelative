@@ -3,6 +3,8 @@
 #include <assert.h>
 int main(int argc, char **argv)
 {
+    assert(same_rating_name("Takagi ", "Takagi"));
+    assert(!same_rating_name("Takagi ", "Takagi2"));
     assert(show_relative_level);
     toggle_relative_display();
     assert(!show_relative_level);

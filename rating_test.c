@@ -104,7 +104,10 @@ int main(int argc, char **argv)
         match.games == 300 && !match.same_name && match.char_count == 3 &&
         !strcmp(match.chars[0], "reimu") && !strcmp(match.chars[1], "yuyuko") &&
         !strcmp(match.chars[2], "alice"));
+    assert(ratings_lookup("profile A ", &match) && match.rating == 1510.5);
     assert(ratings_lookup_public("handle-a", &match) && match.rating == 1510.5);
+    assert(ratings_lookup_handle("handle-a", &match) && match.rating == 1510.5);
+    assert(!ratings_lookup_handle("Public A", &match));
     assert(ratings_lookup_public("Public A", &match) && match.rating == 1510.5);
     assert(!ratings_lookup_public("duplicate", &match));
     assert(!ratings_lookup("duplicate", &match));
