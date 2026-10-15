@@ -4,6 +4,12 @@
 
 评分数据来自 [soku.cleista.cc](https://soku.cleista.cc/)。
 
+## 截图
+
+![大厅设置菜单与玩家标记](docs/screenshots/menu.png)
+
+![新人保护光环](docs/screenshots/halo.png)
+
 ## 安装
 
 可通过 SokuLauncher 的“设置 - 下载”安装，也可以将安装包解压到游戏的 `modules` 目录。安装后在插件设置里启用“真实相对”。

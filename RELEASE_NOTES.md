@@ -1,5 +1,7 @@
 # 0.8.0
 
+![大厅设置菜单与玩家标记](https://raw.githubusercontent.com/HawkingChen/SokuLobbyAssist-TrueRelative/main/docs/screenshots/menu.png)
+
 ### 新功能
 - 大厅按 F9 打开设置菜单，可切换等级分显示模式、自己的信息、相对等级、评分框位置和全体玩家标记，并调整相对阈值。
 - 增加了新人保护光环和触手危险标识，可在菜单中设置。
