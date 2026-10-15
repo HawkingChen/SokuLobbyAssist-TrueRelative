@@ -2,15 +2,15 @@
 ; 以下是各段位的最低评分，按从高到低判断。
 [Thresholds]
 ; 相对7+最低评分
-relative_7_plus=2500
+relative_7_plus=2800
 ; 相对6最低评分
-relative_6=2250
+relative_6=2500
 ; 相对5最低评分
-relative_5=2000
+relative_5=2300
 ; 相对4最低评分
-relative_4=1800
+relative_4=2000
 ; 相对3最低评分
-relative_3=1600
+relative_3=1800
 
 ; 相对1萌新条件：评分和总局数都不高于下面的值。
 [Newbie]
