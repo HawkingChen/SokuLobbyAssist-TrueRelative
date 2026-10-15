@@ -23,7 +23,7 @@ cp third_party/curl/curl-ca-bundle.crt build/
 mkdir -p build/package
 # Remove the obsolete external downloader from reused staging directories.
 rm -f build/package/curl.exe build/launcher-package/SokuLobbyAssist/curl.exe
-cp build/TrueRelative.dll mod.json SokuLobbyAssist.ini relative-levels.txt ratings-map.tsv \
+cp build/TrueRelative.dll mod.json SokuLobbyAssist.ini relative-levels.txt ratings-map.tsv LICENSE \
   third_party/curl/curl-ca-bundle.crt third_party/libcurl/COPYING.txt third_party/libcurl/MBEDTLS-LICENSE.txt '相对等级阈值说明.txt' build/package/
 mkdir -p build/launcher-package/SokuLobbyAssist
 cp build/package/* build/launcher-package/SokuLobbyAssist/
