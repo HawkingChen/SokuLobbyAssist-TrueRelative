@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <curl/curl.h>
 
 #define MAX_JSON (12u * 1024u * 1024u)
 #define MAX_RECORDS 12000u
@@ -32,7 +33,7 @@ static Manual manual[256];
 static unsigned manual_count;
 static FILETIME fetched_at;
 static char cache_path[MAX_PATH], map_path[MAX_PATH];
-static char curl_path[MAX_PATH], ca_path[MAX_PATH];
+static char ca_path[MAX_PATH];
 static char claim_cache_path[MAX_PATH];
 static char claim_profile[129], claim_handle[65];
 static FILETIME claim_checked;
@@ -254,39 +255,100 @@ static bool write_cache(const char *json, size_t length)
     if (!ok) { DeleteFileA(temporary); return false; }
     return MoveFileExA(temporary, cache_path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 }
-static char *fetch_url(const char *url, const char *output, size_t *length)
+// Serialize transfers because the bundled TLS build has shared RNG state.
+static CRITICAL_SECTION download_lock;
+static INIT_ONCE curl_once = INIT_ONCE_STATIC_INIT;
+static CURLcode curl_init_result = CURLE_FAILED_INIT;
+static BOOL CALLBACK initialize_curl(PINIT_ONCE once, PVOID parameter, PVOID *context)
 {
-    char command[4 * MAX_PATH + 512];
-    if (snprintf(command, sizeof(command),
-        "\"%s\" --silent --show-error --fail --location --max-time 25 --cacert \"%s\" --output \"%s\" "
-        "\"%s\"", curl_path, ca_path, output, url) >= (int)sizeof(command)) return NULL;
-    DeleteFileA(output);
-    STARTUPINFOA startup = {0};
-    PROCESS_INFORMATION process = {0};
-    startup.cb = sizeof(startup);
-    startup.dwFlags = STARTF_USESHOWWINDOW;
-    startup.wShowWindow = SW_HIDE;
-    if (!CreateProcessA(curl_path, command, NULL, NULL, FALSE, CREATE_NO_WINDOW,
-                        NULL, NULL, &startup, &process)) {
-        last_fetch_error = GetLastError(); return NULL;
+    (void)once; (void)parameter; (void)context;
+    InitializeCriticalSection(&download_lock);
+    curl_init_result = curl_global_init(CURL_GLOBAL_DEFAULT);
+    return TRUE;
+}
+static void network_log(const char *message)
+{
+    char path[MAX_PATH];
+    snprintf(path, sizeof(path), "%s", ca_path);
+    char *slash = strrchr(path, '\\');
+    if (!slash || (size_t)(slash - path) + 25 >= sizeof(path)) return;
+    strcpy(slash + 1, "TrueRelative-network.log");
+    HANDLE file = CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                             NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) return;
+    SYSTEMTIME now; GetLocalTime(&now);
+    char line[1024];
+    int size = snprintf(line, sizeof(line), "%04u-%02u-%02u %02u:%02u:%02u %s\r\n",
+        now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond, message);
+    DWORD written;
+    if (size > 0 && size < (int)sizeof(line)) WriteFile(file, line, (DWORD)size, &written, NULL);
+    CloseHandle(file);
+}
+typedef struct { char *data; size_t size; } Download;
+static size_t receive_json(char *data, size_t size, size_t count, void *context)
+{
+    Download *download = context;
+    if (size && count > MAX_JSON / size) return 0;
+    size_t bytes = size * count;
+    if (bytes > MAX_JSON - download->size) return 0;
+    if (!bytes) return 0;
+    char *next = realloc(download->data, download->size + bytes + 1);
+    if (!next) return 0;
+    download->data = next;
+    memcpy(next + download->size, data, bytes);
+    download->size += bytes;
+    next[download->size] = 0;
+    return bytes;
+}
+static char *fetch_url(const char *url, size_t *length)
+{
+    *length = 0;
+    InitOnceExecuteOnce(&curl_once, initialize_curl, NULL, NULL);
+    if (curl_init_result != CURLE_OK) {
+        network_log("libcurl initialization failed"); return NULL;
     }
-    DWORD wait = WaitForSingleObject(process.hProcess, 35000);
-    if (wait == WAIT_TIMEOUT) TerminateProcess(process.hProcess, 1);
-    DWORD exit_code = 1;
-    GetExitCodeProcess(process.hProcess, &exit_code);
-    CloseHandle(process.hThread);
-    CloseHandle(process.hProcess);
-    char *data = NULL;
-    if (wait == WAIT_OBJECT_0 && exit_code == 0) data = read_file(output, length, NULL);
-    DeleteFileA(output);
-    last_fetch_error = exit_code;
-    return data;
+    EnterCriticalSection(&download_lock);
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        network_log("libcurl handle allocation failed");
+        LeaveCriticalSection(&download_lock);
+        return NULL;
+    }
+    Download download = {0};
+    char error[CURL_ERROR_SIZE] = {0};
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "https");
+    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "https");
+    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 25L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_CAINFO, ca_path);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "TrueRelative/0.7.9");
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receive_json);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &download);
+    CURLcode result = curl_easy_perform(curl);
+    long status = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+    last_fetch_error = (DWORD)result;
+    char message[640];
+    snprintf(message, sizeof(message), "HTTPS %s: curl=%d HTTP=%ld bytes=%lu %s",
+        strstr(url, "/api/ratings") ? "ratings" : "profile lookup", (int)result,
+        status, (unsigned long)download.size, result == CURLE_OK ? "OK" :
+        (error[0] ? error : curl_easy_strerror(result)));
+    network_log(message);
+    curl_easy_cleanup(curl);
+    LeaveCriticalSection(&download_lock);
+    if (result != CURLE_OK || !download.size) { free(download.data); return NULL; }
+    *length = download.size;
+    return download.data;
 }
 static char *fetch_curl(size_t *length)
 {
-    char output[MAX_PATH];
-    if (snprintf(output, sizeof(output), "%s.download", cache_path) >= (int)sizeof(output)) return NULL;
-    return fetch_url("https://soku.cleista.cc/api/ratings?min=1&status=all", output, length);
+    return fetch_url("https://soku.cleista.cc/api/ratings?min=1&status=all", length);
 }
 static bool parse_claim(const char *json, size_t length, const char *profile, char handle[65])
 {
@@ -366,13 +428,11 @@ static DWORD WINAPI claim_worker(void *argument)
 {
     char *profile = argument;
     char url[512];
-    char output[MAX_PATH];
     char handle[65] = {0};
     bool valid = false;
-    if (claim_url(profile, url) &&
-        snprintf(output, sizeof(output), "%s.download", claim_cache_path) < (int)sizeof(output)) {
+    if (claim_url(profile, url)) {
         size_t length = 0;
-        char *json = fetch_url(url, output, &length);
+        char *json = fetch_url(url, &length);
         if (json) { valid = parse_claim(json, length, profile, handle); free(json); }
     }
     FILETIME now; GetSystemTimeAsFileTime(&now);
@@ -489,12 +549,11 @@ static DWORD WINAPI other_claim_worker(void *unused)
         entry->pending = false;
         entry->in_flight = true;
         LeaveCriticalSection(&ratings_lock);
-        char url[512], output[MAX_PATH], handle[65] = {0};
+        char url[512], handle[65] = {0};
         bool valid = false;
-        if (claim_url(profile, url) &&
-            snprintf(output, sizeof(output), "%s.download", other_claim_path) < (int)sizeof(output)) {
+        if (claim_url(profile, url)) {
             size_t length = 0;
-            char *json = fetch_url(url, output, &length);
+            char *json = fetch_url(url, &length);
             if (json) { valid = parse_claim(json, length, profile, handle); free(json); }
         }
         FILETIME now; GetSystemTimeAsFileTime(&now);
@@ -616,11 +675,11 @@ static DWORD WINAPI ratings_worker(void *unused)
         if (json) {
             Record *rows = NULL; unsigned count = 0;
             if (parse_ratings(json, length, &rows, &count)) {
-                write_cache(json, length);
+                if (!write_cache(json, length)) network_log("ratings cache write failed; using downloaded data in memory");
                 GetSystemTimeAsFileTime(&now);
                 publish(rows, count, now);
                 refreshed = true;
-            }
+            } else network_log("ratings JSON parse failed; keeping previous cache");
             free(json);
         }
         Sleep(refreshed ? REFRESH_MS : 60000);
@@ -641,7 +700,6 @@ void ratings_start(HMODULE plugin)
     snprintf(claim_cache_path, sizeof(claim_cache_path), "%sown-claim-cache.tsv", path);
     snprintf(other_claim_path, sizeof(other_claim_path), "%sother-claim-cache.tsv", path);
     snprintf(map_path, sizeof(map_path), "%sratings-map.tsv", path);
-    snprintf(curl_path, sizeof(curl_path), "%scurl.exe", path);
     snprintf(ca_path, sizeof(ca_path), "%scurl-ca-bundle.crt", path);
     load_manual();
     load_claim_cache();

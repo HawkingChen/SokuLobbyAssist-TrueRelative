@@ -4,12 +4,10 @@
 int main(int argc, char **argv)
 {
     if (argc == 2 && !strcmp(argv[1], "--claim")) {
-        GetModuleFileNameA(NULL, curl_path, sizeof(curl_path));
-        char *slash = strrchr(curl_path, '\\');
+        GetModuleFileNameA(NULL, ca_path, sizeof(ca_path));
+        char *slash = strrchr(ca_path, '\\');
         assert(slash);
         slash[1] = 0;
-        strcpy(ca_path, curl_path);
-        strcat(curl_path, "curl.exe");
         strcat(ca_path, "curl-ca-bundle.crt");
         strcpy(other_claim_path, ca_path);
         char *last = strrchr(other_claim_path, '\\');
@@ -35,13 +33,11 @@ int main(int argc, char **argv)
         puts("Windows queued claimed-name lookup and cache: OK");
         return 0;
     }
-    if (argc == 2 && !strcmp(argv[1], "--fetch")) {
-        GetModuleFileNameA(NULL, curl_path, sizeof(curl_path));
-        char *slash = strrchr(curl_path, '\\');
+    if (argc == 2 && (!strcmp(argv[1], "--fetch") || !strcmp(argv[1], "--bad-ca"))) {
+        GetModuleFileNameA(NULL, ca_path, sizeof(ca_path));
+        char *slash = strrchr(ca_path, '\\');
         assert(slash);
         slash[1] = 0;
-        strcpy(ca_path, curl_path);
-        strcat(curl_path, "curl.exe");
         strcat(ca_path, "curl-ca-bundle.crt");
         GetModuleFileNameA(NULL, cache_path, sizeof(cache_path));
         slash = strrchr(cache_path, '\\');
@@ -49,15 +45,34 @@ int main(int argc, char **argv)
         slash[1] = 0;
         strcat(cache_path, "rating-test-cache.json");
         size_t length = 0;
+        bool bad_ca = !strcmp(argv[1], "--bad-ca");
+        if (bad_ca) strcat(ca_path, ".missing");
         char *json = fetch_curl(&length);
+        if (bad_ca) {
+            assert(!json && !length && last_fetch_error != CURLE_OK);
+            puts("HTTPS rejects missing CA bundle: OK");
+            return 0;
+        }
         if (!json) { printf("curl failed: %lu\n", (unsigned long)last_fetch_error); return 2; }
         assert(length > 100000);
         Record *rows = NULL; unsigned count = 0;
         assert(parse_ratings(json, length, &rows, &count) && count > 6000);
         printf("Windows leaderboard fetch: OK (%u records)\n", count);
+        assert(write_cache(json, length));
+        size_t saved_length = 0;
+        char *saved = read_file(cache_path, &saved_length, NULL);
+        assert(saved && saved_length == length && !memcmp(saved, json, length));
+        free(saved); DeleteFileA(cache_path);
         free(rows); free(json);
         return 0;
     }
+    Download download = {0};
+    assert(receive_json("{}", 1, 2, &download) == 2);
+    assert(download.size == 2 && !strcmp(download.data, "{}"));
+    assert(receive_json("x", MAX_JSON, 2, &download) == 0);
+    download.size = MAX_JSON;
+    assert(receive_json("x", 1, 1, &download) == 0);
+    free(download.data);
     const char fixture[] = "{\"status\":{\"computedAt\":123},\"players\":["
         "{\"name\":\"Public A\",\"playedAs\":\"profile A\",\"handle\":\"handle-a\","
         "\"rating\":1510.5,\"rd\":68.2,\"games\":300,\"characters\":["

@@ -10,7 +10,7 @@ ENV = dict(os.environ, WINEDEBUG='-all',
 
 def execute(name, *args):
     result = subprocess.run([WINE, os.path.join(ROOT, 'build', name), *args],
-                            env=ENV, capture_output=True, text=True, timeout=25)
+                            env=ENV, capture_output=True, text=True, timeout=45)
     assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
     print(result.stdout.strip(), flush=True)
 
@@ -21,8 +21,10 @@ def windows_path(path):
 
 execute('MenuTest.exe',
         windows_path('/run/media/deck/share/fxtz/th123/modules/SokuLobbiesMod/SokuLobbiesMod.dll'),
-        windows_path('/home/deck/SokuLobbiesMod-0.7.5.0-backup-20260920/SokuLobbiesMod.dll'))
+        windows_path(os.path.join(ROOT, 'test_fixtures', 'SokuLobbiesMod-0.7.5.0.dll')))
 execute('RatingTest.exe')
+execute('RatingTest.exe', '--fetch')
+execute('RatingTest.exe', '--bad-ca')
 execute('RatingTest.exe', '--claim')
 if os.path.exists('/tmp/soku-rating.json'):
     execute('RatingTest.exe', windows_path('/tmp/soku-rating.json'))

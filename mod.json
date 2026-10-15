@@ -1,12 +1,39 @@
 {
   "name": "真实相对",
   "author": "凹帝",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "priority": "-60000",
   "description": "在东方非想天则（Touhou 12.3）联机大厅显示玩家评分和相对等级。数据来自 soku.cleista.cc。",
   "main": "TrueRelative.dll",
   "fileName": "TrueRelative.dll",
-  "configFiles": ["SokuLobbyAssist.ini", "relative-levels.txt"],
+  "configFiles": [
+    "SokuLobbyAssist.ini",
+    "relative-levels.txt"
+  ],
   "compressed": true,
-  "updateWorkingDir": "."
+  "updateWorkingDir": ".",
+  "repositories": [
+    {
+      "type": "gitee",
+      "owner": "whzstsl",
+      "repo": "soku-lobby-assist-true-relative",
+      "branch": "main"
+    },
+    {
+      "type": "github",
+      "owner": "HawkingChen",
+      "repo": "SokuLobbyAssist-TrueRelative",
+      "branch": "main"
+    }
+  ],
+  "downloadLinks": [
+    {
+      "type": "gitee",
+      "url": "https://gitee.com/whzstsl/soku-lobby-assist-true-relative/releases/download/v0.7.9/TrueRelative-0.7.9-install.zip"
+    },
+    {
+      "type": "github",
+      "url": "https://github.com/HawkingChen/SokuLobbyAssist-TrueRelative/releases/download/v0.7.9/TrueRelative-0.7.9-install.zip"
+    }
+  ]
 }

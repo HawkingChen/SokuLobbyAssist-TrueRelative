@@ -1,10 +1,15 @@
 # TrueRelative
 
-`sh build.sh` creates `build/package/` with the plugin DLL, `mod.json`, a manual
-mapping file, and an HTTPS helper. The helper is the [official curl for Windows
-8.22.0_3](https://curl.se/windows/) x64 build with its CA bundle and COPYING
-file. WinHTTP and WinINet could not establish HTTPS in this Proton prefix; the
-bundled curl downloaded and parsed the public ratings JSON successfully.
+`sh build.sh` creates the plugin and `build/TrueRelative-0.7.9-install.zip`.
+HTTPS runs inside the 32-bit DLL using statically linked libcurl 8.23.0 and
+Mbed TLS 3.6.7 (Apache-2.0 option). No external executable or additional DLL
+is needed. Keep `curl-ca-bundle.crt` beside the plugin: certificate and hostname
+verification remain enabled. Downloads are limited to HTTPS, 12 MiB, five
+redirects and 25 seconds; transfers are serialized for the TLS RNG's shared state.
+The leaderboard cache still lasts 24 hours, and failures preserve existing data.
+`TrueRelative-network.log` records transport/HTTP failures and cache/parse errors.
+The static dependencies, source archives, licenses and rebuild instructions are
+in `third_party/libcurl/`. The previous curl.exe helper is no longer shipped.
 
 The plugin accepts only the verified Chinese lobby 0.7.5.2 DLL with SHA-256
 `dbce5a6a59e94e2d4c43bcfbd69fce35ad9804a4dd20e76aa28417a3c6ab28cd` or the
@@ -71,7 +76,12 @@ version rejection, player layout, stable F8 selection across movement,
 local-player exclusion while the camera pans, rating matching by game profile
 and explicit account, duplicate rejection, and stale cache.
 `RatingTest.exe --fetch`
-downloaded and parsed 6,693 live records through the bundled curl helper.
+downloaded and parsed 7,102 live records through the built-in library for 0.7.9.
+Cache write/read, bounded response buffers, rejecting a missing CA bundle, and
+queued claimed-name lookup passed under GE-Proton10-12. The tests ran without
+`build/curl.exe`. Schannel was tried and failed in this Wine prefix, so the final
+build uses Mbed TLS. Native Windows and third-party antivirus have not yet been
+tested for this release.
 
 For direct GE-Proton launches from this shell, the 32-bit Steam runtime library
 path must be added after `/usr/lib32:/usr/lib` in `LD_LIBRARY_PATH`; otherwise
