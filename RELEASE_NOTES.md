@@ -3,8 +3,9 @@
 <a href="https://raw.githubusercontent.com/HawkingChen/SokuLobbyAssist-TrueRelative/main/docs/screenshots/menu.png"><img src="https://raw.githubusercontent.com/HawkingChen/SokuLobbyAssist-TrueRelative/main/docs/screenshots/menu.png" alt="大厅设置菜单与玩家标记" width="640"></a>
 
 ### 新功能
-- 大厅按 F9 打开设置菜单，可切换等级分显示模式、自己的信息、相对等级、评分框位置和全体玩家标记，并调整相对阈值。
+- 新增 GUI 设置菜单，按 F9 打开。
 - 增加了新人保护光环和触手危险标识，可在菜单中设置。
+- 可以自定义相对等级的分数线。
 
 ### 优化
 - 根据大家的意见调整了相对等级分数线，让等级更贴近实际。
