@@ -1,12 +1,22 @@
 # TrueRelative
 
+Version 0.8.0 adds a lobby settings menu on F9 or Start+Select. The display
+mode has `auto`, `manual`, and `off` states; F8 cycles nearby players only in
+manual mode, while F10 switches auto/off. The menu saves these settings to `SokuLobbyAssist.ini` and edits
+the relative thresholds in `relative-levels.txt`. It also controls the separate
+all-player visual marker module. The Wine fixture test verifies the three mode
+transitions, local-card independence, input masking, and comment-preserving
+config writes. The packaged score boundaries are 2800/2500/2300/2000/1800,
+and relative labels start hidden. Live menu rendering and marker sizing still
+need a game check.
+
 `sh build.sh` creates the plugin and `build/TrueRelative-0.7.9-install.zip`.
 HTTPS runs inside the 32-bit DLL using statically linked libcurl 8.23.0 and
 Mbed TLS 3.6.7 (Apache-2.0 option). No external executable or additional DLL
 is needed. Keep `curl-ca-bundle.crt` beside the plugin: certificate and hostname
 verification remain enabled. Downloads are limited to HTTPS, 12 MiB, five
 redirects and 25 seconds; transfers are serialized for the TLS RNG's shared state.
-The leaderboard cache still lasts 24 hours, and failures preserve existing data.
+The leaderboard cache lasts 10 minutes, and failures preserve existing data.
 `TrueRelative-network.log` records transport/HTTP failures and cache/parse errors.
 The static dependencies, source archives, licenses and rebuild instructions are
 in `third_party/libcurl/`. The previous curl.exe helper is no longer shipped.
@@ -38,9 +48,11 @@ positions, suppressing a compact card when no clear position is available.
 Detailed cards label the overall rating, separate it from the character list with
 a thin line, and use the 2250 boundary between 相对5 and 相对6.
 
-The ratings worker fetches the full public endpoint
-`https://soku.cleista.cc/api/ratings?min=1&status=all` once and refreshes it
-after 24 hours. It stores `ratings-cache.json` next to the plugin. A failed
+The ratings worker fetches the prebuilt full export endpoint
+`https://soku.cleista.cc/api/v1/ratings/export.json` once and refreshes it
+after 10 minutes with `If-None-Match` when an ETag is known. HTTP 304 reuses
+the local records and renews their cache timestamp. It stores `ratings-cache.json`
+next to the plugin. A failed
 refresh retains the old records and retries after one minute. The overlay
 labels stale results with the cache timestamp. A unique `playedAs` match takes
 priority; a unique display-name match is accepted, while duplicates are unknown.
@@ -65,7 +77,7 @@ The lookup runs off the render thread; an explicit account setting still overrid
 For other visible players whose direct leaderboard lookup fails, the plugin queues one
 public claimed-name lookup per unique profile. It processes requests serially and caches
 positive and negative answers for a day in `other-claim-cache.tsv`. Duplicate names
-visible in the lobby remain unknown. A score below 1400 with fewer than 100 total
+visible in the lobby remain unknown. A score of at most 1400 with at most 100 total
 games is shown as 相对1萌新; the remaining scores below 1600 are 相对<3.
 The score card omits matching diagnostics. F7 toggles the relative-tier label; it is
 enabled by default. The network preflight code is no longer part of this plugin; no

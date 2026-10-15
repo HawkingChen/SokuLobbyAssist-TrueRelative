@@ -47,17 +47,29 @@ int main(int argc, char **argv)
         size_t length = 0;
         bool bad_ca = !strcmp(argv[1], "--bad-ca");
         if (bad_ca) strcat(ca_path, ".missing");
-        char *json = fetch_curl(&length);
+        bool not_modified = false;
+        char response_etag[128];
+        char *json = fetch_curl(&length, &not_modified, response_etag);
         if (bad_ca) {
-            assert(!json && !length && last_fetch_error != CURLE_OK);
+            assert(!json && !length && !not_modified && last_fetch_error != CURLE_OK);
             puts("HTTPS rejects missing CA bundle: OK");
             return 0;
         }
         if (!json) { printf("curl failed: %lu\n", (unsigned long)last_fetch_error); return 2; }
+        assert(!not_modified && response_etag[0]);
         assert(length > 100000);
         Record *rows = NULL; unsigned count = 0;
         assert(parse_ratings(json, length, &rows, &count) && count > 6000);
         printf("Windows leaderboard fetch: OK (%u records)\n", count);
+        strcpy(ratings_etag, response_etag);
+        size_t repeated_length = 0;
+        bool unchanged = false;
+        char repeated_etag[128];
+        char *repeated = fetch_curl(&repeated_length, &unchanged, repeated_etag);
+        assert((unchanged && !repeated && !repeated_length) ||
+               (!unchanged && repeated && repeated_length > 100000 && repeated_etag[0]));
+        printf("ETag revalidation: %s\n", unchanged ? "HTTP 304" : "updated export");
+        free(repeated);
         assert(write_cache(json, length));
         size_t saved_length = 0;
         char *saved = read_file(cache_path, &saved_length, NULL);
@@ -67,6 +79,10 @@ int main(int argc, char **argv)
         return 0;
     }
     Download download = {0};
+    ResponseHeaders headers = {{0}};
+    const char etag_header[] = "ETag: W/\"example\"\r\n";
+    assert(receive_headers((char *)etag_header, 1, sizeof(etag_header) - 1, &headers) == sizeof(etag_header) - 1);
+    assert(!strcmp(headers.etag, "W/\"example\""));
     assert(receive_json("{}", 1, 2, &download) == 2);
     assert(download.size == 2 && !strcmp(download.data, "{}"));
     assert(receive_json("x", MAX_JSON, 2, &download) == 0);
@@ -132,7 +148,14 @@ int main(int argc, char **argv)
     strcpy(manual[1].profile, "local name"); strcpy(manual[1].target, "Public A"); manual_count = 2;
     assert(ratings_lookup("local name", &match) && match.manual && match.rating == 1510.5);
     EnterCriticalSection(&ratings_lock);
-    uint64_t old = filetime_number(fetched_at) - (uint64_t)25 * 60 * 60 * 10000000;
+    GetSystemTimeAsFileTime(&now);
+    uint64_t recent = filetime_number(now) - (uint64_t)9 * 60 * 10000000;
+    fetched_at.dwLowDateTime = (DWORD)recent;
+    fetched_at.dwHighDateTime = (DWORD)(recent >> 32);
+    LeaveCriticalSection(&ratings_lock);
+    assert(ratings_lookup("profile A", &match) && !match.stale);
+    EnterCriticalSection(&ratings_lock);
+    uint64_t old = filetime_number(now) - (uint64_t)11 * 60 * 10000000;
     fetched_at.dwLowDateTime = (DWORD)old;
     fetched_at.dwHighDateTime = (DWORD)(old >> 32);
     LeaveCriticalSection(&ratings_lock);

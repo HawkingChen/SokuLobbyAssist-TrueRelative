@@ -5,9 +5,8 @@
 typedef struct { float x, y, z, rhw; D3DCOLOR color; } VisualVertex;
 
 static bool enabled;
-static unsigned input_step;
-static DWORD input_started;
-static WORD digit_was_down;
+static int lower_gap = 100;
+static int higher_gap = 300;
 static unsigned char types[256];
 static uint32_t ids[256];
 static unsigned cached_count;
@@ -16,41 +15,25 @@ static const void *cached_menu;
 
 unsigned lobby_visual_relation(double own, double other)
 {
-    if (own - other >= 100.0) return 1;
-    if (other - own >= 300.0) return 2;
+    if (own - other >= lower_gap) return 1;
+    if (other - own >= higher_gap) return 2;
     return 0;
 }
 
-void lobby_visual_input(bool foreground, bool chatting)
+void lobby_visual_configure(bool show, int lower, int higher)
 {
-    static const unsigned char code[] = {0x68, 0x6e, 0x6c, 0x62};
-    WORD down = 0;
-    for (unsigned digit = 0; digit < 10; ++digit)
-        if (GetAsyncKeyState('0' + digit) & 0x8000) down |= (WORD)(1u << digit);
-    bool armed = foreground && !chatting &&
-        (GetAsyncKeyState(VK_CONTROL) & 0x8000) &&
-        (GetAsyncKeyState(VK_SHIFT) & 0x8000);
-    DWORD now = GetTickCount();
-    if (!armed || (input_step && now - input_started > 5000)) input_step = 0;
-    WORD pressed = down & (WORD)~digit_was_down;
-    digit_was_down = down;
-    if (!armed) return;
-    for (unsigned digit = 0; digit < 10; ++digit) if (pressed & (1u << digit)) {
-        if (((unsigned char)('0' + digit) ^ 0x5a) == code[input_step]) {
-            if (!input_step) input_started = now;
-            if (++input_step == sizeof(code)) {
-                enabled = !enabled;
-                updated = 0;
-                input_step = 0;
-            }
-        } else input_step = 0;
-    }
+    enabled = show;
+    lower_gap = lower;
+    higher_gap = higher;
+    updated = 0;
 }
+
+bool lobby_visual_enabled(void) { return enabled; }
+int lobby_visual_lower_gap(void) { return lower_gap; }
+int lobby_visual_higher_gap(void) { return higher_gap; }
 
 void lobby_visual_reset(void)
 {
-    input_step = 0;
-    digit_was_down = 0;
     updated = 0;
     cached_menu = NULL;
 }
@@ -112,6 +95,16 @@ static void diamond(IDirect3DDevice9 *device, float x, float y, float size, D3DC
     IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLESTRIP, 2, vertices, sizeof(VisualVertex));
 }
 
+static void box(IDirect3DDevice9 *device, float x, float y, float width, float height,
+                D3DCOLOR color)
+{
+    VisualVertex vertices[4] = {
+        {x,y,0,1,color},{x+width,y,0,1,color},
+        {x,y+height,0,1,color},{x+width,y+height,0,1,color}
+    };
+    IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLESTRIP, 2, vertices, sizeof(VisualVertex));
+}
+
 void lobby_visual_draw(IDirect3DDevice9 *device, const void *menu,
                        const VisiblePlayer players[256], unsigned count, uint32_t local_id,
                        int translate_x, int translate_y, LobbyVisualLookup lookup)
@@ -148,17 +141,34 @@ void lobby_visual_draw(IDirect3DDevice9 *device, const void *menu,
         unsigned type = types[i];
         if (!type) continue;
         float x = (float)((int)players[i].x + translate_x);
-        float y = (float)((int)players[i].y + translate_y - 8);
-        if (x < -36 || x > 676 || y < -36 || y > 516) continue;
+        float avatar_y = (float)((int)players[i].y + translate_y);
+        float y = avatar_y - 50;
+        if (x < -48 || x > 688 || y < -48 || y > 528) continue;
         if (type == 1) {
-            ring(device, x, y, 25 + pulse * 2, 21 + pulse * 2, 3, 0x4873edce);
-            ring(device, x, y, 21 + pulse, 17 + pulse, 2, 0xb06fffe0);
+            ring(device, x, y, 51 + pulse * 2, 70 + pulse * 2, 6, 0x5073edce);
+            ring(device, x, y, 46 + pulse * 2, 65 + pulse * 2, 3, 0xb06fffe0);
+            diamond(device, x, y - 69 - pulse * 2, 4, 0xd4e3fff3);
         } else {
-            ring(device, x, y, 29 + pulse * 3, 25 + pulse * 3, 4, 0x62ff455a);
-            ring(device, x, y, 23 + pulse, 19 + pulse, 2, 0xc8ff6c78);
-            diamond(device, x, y - 31 - pulse * 3, 4, 0xd0ff9a9a);
-            diamond(device, x - 34 - pulse * 3, y, 3, 0xa0ff6477);
-            diamond(device, x + 34 + pulse * 3, y, 3, 0xa0ff6477);
+            float left = x - 45 - pulse;
+            float top = avatar_y - 117 - pulse;
+            float width = 96 + pulse * 2;
+            float height = 139 + pulse * 2;
+            box(device, left, top, width, height, 0x28ff304a);
+            box(device, left - 2, top - 2, width + 4, 2, 0x58ff6177);
+            box(device, left - 2, top + height, width + 4, 2, 0x58ff6177);
+            box(device, left - 2, top, 2, height, 0x58ff6177);
+            box(device, left + width, top, 2, height, 0x58ff6177);
+            box(device, left, top, width, 3, 0xdcff5369);
+            box(device, left, top + height - 3, width, 3, 0xdcff5369);
+            box(device, left, top, 3, height, 0xdcff5369);
+            box(device, left + width - 3, top, 3, height, 0xdcff5369);
+            /* Three small marks near the top avoid covering the avatar. */
+            for (int j = 0; j < 3; ++j) {
+                float mark_x = left + width / 2 - 15 + j * 12;
+                box(device, mark_x - 2, top + 10, 7, 22, 0x70ff7182);
+                box(device, mark_x, top + 10, 3, 17, 0xeaffd7df);
+                box(device, mark_x, top + 30, 3, 4, 0xeaffd7df);
+            }
         }
     }
 }

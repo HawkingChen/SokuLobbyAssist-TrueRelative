@@ -18,14 +18,18 @@
 /* InLobbyMenu's MSVC RTTI vtable in verified 0.7.5.2 and 0.7.5.4 DLLs.
    The game MenuConnect vtable is only a router and is not the in-lobby menu. */
 #define LOBBY_MENU_VTABLE_RVA 0x2129a4
+typedef struct { int horizontalAxis, verticalAxis, a, b, c, d, changeCard, spellcard, pause, select; } GameInput;
 #ifdef TRUE_RELATIVE_TEST_HARNESS
 static IDirect3DDevice9 *harness_device;
 static HWND harness_window;
 #define GAME_DEVICE harness_device
 #define GAME_WINDOW harness_window
+static GameInput harness_input;
+#define GAME_INPUT harness_input
 #else
 #define GAME_DEVICE (*(IDirect3DDevice9 **)0x8a0e30)
 #define GAME_WINDOW (*(HWND *)0x89ff90)
+#define GAME_INPUT (*(GameInput *)0x89a280)
 #endif
 typedef int (__thiscall *MenuMethod)(void *);
 typedef void *(__thiscall *DestroyMethod)(void *, unsigned char);
@@ -41,12 +45,17 @@ static ID3DXFont *small_font;
 static IDirect3DDevice9 *font_device;
 static char log_path[MAX_PATH];
 static bool installed;
-static bool f7_was_down, f8_was_down;
+static bool f8_was_down;
 static bool f9_was_down, f10_was_down;
-/* Automatic nearest-player details start enabled on every game launch. */
-static bool automatic_mode = true;
+static bool pad_menu_was_down;
+static bool settings_open, settings_dirty;
+static unsigned settings_page, settings_row;
+static DWORD settings_repeat_at;
+static int settings_last_direction;
+typedef enum { DISPLAY_AUTO, DISPLAY_MANUAL, DISPLAY_OFF } DisplayMode;
+static DisplayMode display_mode = DISPLAY_AUTO;
 static bool show_own_rating = true;
-static bool show_relative_level = true;
+static bool show_relative_level;
 static uint32_t selected_player_id = UINT32_MAX;
 typedef enum { POSITION_ABOVE, POSITION_CENTER, POSITION_RIGHT } CardPosition;
 static CardPosition card_position = POSITION_ABOVE;
@@ -59,7 +68,7 @@ typedef struct {
     int relative7plus, relative6, relative5, relative4, relative3;
     int newbie_rating_max, newbie_games_max;
 } RelativeThresholds;
-static RelativeThresholds relative_thresholds = {2500, 2250, 2000, 1800, 1600, 1399, 99};
+static RelativeThresholds relative_thresholds = {2800, 2500, 2300, 2000, 1800, 1400, 100};
 /* SHA-256 allowlist for verified Chinese lobby DLL builds. */
 static const BYTE supported_lobby_sha256[][32] = {
   {
@@ -386,13 +395,13 @@ static const wchar_t *relative_level(double score, unsigned games)
 static void load_relative_thresholds(const char *path)
 {
     if (!path || !*path) return;
-    relative_thresholds.relative7plus = bounded((int)GetPrivateProfileIntA("Thresholds", "relative_7_plus", 2500, path), 0, 10000);
-    relative_thresholds.relative6 = bounded((int)GetPrivateProfileIntA("Thresholds", "relative_6", 2250, path), 0, 10000);
-    relative_thresholds.relative5 = bounded((int)GetPrivateProfileIntA("Thresholds", "relative_5", 2000, path), 0, 10000);
-    relative_thresholds.relative4 = bounded((int)GetPrivateProfileIntA("Thresholds", "relative_4", 1800, path), 0, 10000);
-    relative_thresholds.relative3 = bounded((int)GetPrivateProfileIntA("Thresholds", "relative_3", 1600, path), 0, 10000);
-    relative_thresholds.newbie_rating_max = bounded((int)GetPrivateProfileIntA("Newbie", "rating_max", 1399, path), 0, 10000);
-    relative_thresholds.newbie_games_max = bounded((int)GetPrivateProfileIntA("Newbie", "games_max", 99, path), 0, 1000000);
+    relative_thresholds.relative7plus = bounded((int)GetPrivateProfileIntA("Thresholds", "relative_7_plus", 2800, path), 0, 10000);
+    relative_thresholds.relative6 = bounded((int)GetPrivateProfileIntA("Thresholds", "relative_6", 2500, path), 0, 10000);
+    relative_thresholds.relative5 = bounded((int)GetPrivateProfileIntA("Thresholds", "relative_5", 2300, path), 0, 10000);
+    relative_thresholds.relative4 = bounded((int)GetPrivateProfileIntA("Thresholds", "relative_4", 2000, path), 0, 10000);
+    relative_thresholds.relative3 = bounded((int)GetPrivateProfileIntA("Thresholds", "relative_3", 1800, path), 0, 10000);
+    relative_thresholds.newbie_rating_max = bounded((int)GetPrivateProfileIntA("Newbie", "rating_max", 1400, path), 0, 10000);
+    relative_thresholds.newbie_games_max = bounded((int)GetPrivateProfileIntA("Newbie", "games_max", 100, path), 0, 1000000);
     if (relative_thresholds.relative6 > relative_thresholds.relative7plus)
         relative_thresholds.relative6 = relative_thresholds.relative7plus;
     if (relative_thresholds.relative5 > relative_thresholds.relative6)
@@ -441,7 +450,113 @@ static void load_overlay_settings(HMODULE module)
     card_offset_y = bounded((int)GetPrivateProfileIntA("Overlay", "offset_y", 0, overlay_config_path), -300, 300);
     own_x = bounded((int)GetPrivateProfileIntA("OwnRating", "x", 12, overlay_config_path), 4, 620);
     own_y = bounded((int)GetPrivateProfileIntA("OwnRating", "y", 12, overlay_config_path), 4, 460);
+    char mode[24];
+    GetPrivateProfileStringA("Display", "mode", "", mode, sizeof(mode), overlay_config_path);
+    if (!strcmp(mode, "manual")) display_mode = DISPLAY_MANUAL;
+    else if (!strcmp(mode, "off")) display_mode = DISPLAY_OFF;
+    else if (!strcmp(mode, "auto")) display_mode = DISPLAY_AUTO;
+    else display_mode = GetPrivateProfileIntA("Display", "automatic", 1, overlay_config_path) ? DISPLAY_AUTO : DISPLAY_MANUAL;
+    show_own_rating = GetPrivateProfileIntA("Display", "own_rating", 1, overlay_config_path) != 0;
+    show_relative_level = GetPrivateProfileIntA("Display", "relative_level", 0, overlay_config_path) != 0;
+#ifdef TRUE_RELATIVE_VISUALS
+    lobby_visual_configure(GetPrivateProfileIntA("Markers", "enabled", 0, overlay_config_path) != 0,
+        bounded(GetPrivateProfileIntA("Markers", "lower_gap", 100, overlay_config_path), 1, 5000),
+        bounded(GetPrivateProfileIntA("Markers", "higher_gap", 300, overlay_config_path), 1, 5000));
+#endif
     load_own_account();
+}
+/* Replace just the requested INI value, retaining the user's comments and account mapping. */
+static bool save_ini_value(const char *path, const char *section, const char *key, const char *value)
+{
+    char lines[16384];
+    size_t size = 0;
+    FILE *in = fopen(path, "rb");
+    if (in) {
+        size = fread(lines, 1, sizeof(lines) - 1, in);
+        if (!feof(in)) { fclose(in); return false; }
+        fclose(in);
+    }
+    lines[size] = 0;
+    char output[17000];
+    size_t used = 0;
+    bool in_section = false, found_section = false, written = false;
+    const char *cursor = lines;
+    while (*cursor) {
+        const char *end = strchr(cursor, '\n');
+        size_t length = end ? (size_t)(end - cursor + 1) : strlen(cursor);
+        if (*cursor == '[') {
+            if (in_section && !written) {
+                int n = snprintf(output + used, sizeof(output) - used, "%s=%s\r\n", key, value);
+                if (n < 0 || (size_t)n >= sizeof(output) - used) return false;
+                used += n; written = true;
+            }
+            in_section = !strncmp(cursor + 1, section, strlen(section)) && cursor[1 + strlen(section)] == ']';
+            if (in_section) found_section = true;
+        }
+        bool match_key = in_section && !strncmp(cursor, key, strlen(key)) && cursor[strlen(key)] == '=';
+        if (match_key) {
+            int n = snprintf(output + used, sizeof(output) - used, "%s=%s\r\n", key, value);
+            if (n < 0 || (size_t)n >= sizeof(output) - used) return false;
+            used += n; written = true;
+        } else {
+            if (length >= sizeof(output) - used) return false;
+            memcpy(output + used, cursor, length); used += length;
+        }
+        cursor += length;
+    }
+    if (!written) {
+        if (used && output[used - 1] != '\n') output[used++] = '\n';
+        int n = snprintf(output + used, sizeof(output) - used, "%s%s%s%s=%s\r\n",
+            found_section ? "" : "\r\n[", found_section ? "" : section,
+            found_section ? "" : "]\r\n", key, value);
+        if (n < 0 || (size_t)n >= sizeof(output) - used) return false;
+        used += n;
+    }
+    char temp[MAX_PATH];
+    if (snprintf(temp, sizeof(temp), "%s.tmp", path) >= (int)sizeof(temp)) return false;
+    FILE *out = fopen(temp, "wb");
+    if (!out) return false;
+    bool ok = fwrite(output, 1, used, out) == used;
+    if (fclose(out)) ok = false;
+    if (!ok) { DeleteFileA(temp); return false; }
+    if (!MoveFileExA(temp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileA(temp); return false;
+    }
+    return true;
+}
+static void save_settings(void)
+{
+    char value[32];
+    bool ok = true;
+#define SAVE_NUMBER(path, section, key, number) do { \
+    snprintf(value, sizeof(value), "%d", (int)(number)); \
+    if (!save_ini_value(path, section, key, value)) ok = false; \
+} while (0)
+    if (!save_ini_value(overlay_config_path, "Display", "mode",
+        display_mode == DISPLAY_AUTO ? "auto" : display_mode == DISPLAY_MANUAL ? "manual" : "off")) ok = false;
+    SAVE_NUMBER(overlay_config_path, "Display", "own_rating", show_own_rating);
+    SAVE_NUMBER(overlay_config_path, "Display", "relative_level", show_relative_level);
+    if (!save_ini_value(overlay_config_path, "Overlay", "position",
+        card_position == POSITION_CENTER ? "center" : card_position == POSITION_RIGHT ? "right" : "above")) ok = false;
+    SAVE_NUMBER(overlay_config_path, "Overlay", "offset_x", card_offset_x);
+    SAVE_NUMBER(overlay_config_path, "Overlay", "offset_y", card_offset_y);
+    SAVE_NUMBER(overlay_config_path, "OwnRating", "x", own_x);
+    SAVE_NUMBER(overlay_config_path, "OwnRating", "y", own_y);
+#ifdef TRUE_RELATIVE_VISUALS
+    SAVE_NUMBER(overlay_config_path, "Markers", "enabled", lobby_visual_enabled());
+    SAVE_NUMBER(overlay_config_path, "Markers", "lower_gap", lobby_visual_lower_gap());
+    SAVE_NUMBER(overlay_config_path, "Markers", "higher_gap", lobby_visual_higher_gap());
+#endif
+    SAVE_NUMBER(level_config_path, "Thresholds", "relative_7_plus", relative_thresholds.relative7plus);
+    SAVE_NUMBER(level_config_path, "Thresholds", "relative_6", relative_thresholds.relative6);
+    SAVE_NUMBER(level_config_path, "Thresholds", "relative_5", relative_thresholds.relative5);
+    SAVE_NUMBER(level_config_path, "Thresholds", "relative_4", relative_thresholds.relative4);
+    SAVE_NUMBER(level_config_path, "Thresholds", "relative_3", relative_thresholds.relative3);
+    SAVE_NUMBER(level_config_path, "Newbie", "rating_max", relative_thresholds.newbie_rating_max);
+    SAVE_NUMBER(level_config_path, "Newbie", "games_max", relative_thresholds.newbie_games_max);
+#undef SAVE_NUMBER
+    log_line(ok ? "settings saved" : "settings save failed");
+    if (ok) settings_dirty = false;
 }
 static void shape_state(IDirect3DDevice9 *device)
 {
@@ -574,7 +689,8 @@ static void draw_ratings(IDirect3DDevice9 *device, void *menu)
     unsigned order[3] = {0};
     unsigned nearby = nearby_players(menu, players, count, order);
     int selected = -1;
-    uint32_t detail_id = automatic_mode && nearby ? players[order[0]].id : selected_player_id;
+    uint32_t detail_id = display_mode == DISPLAY_AUTO && nearby ? players[order[0]].id :
+        display_mode == DISPLAY_MANUAL ? selected_player_id : UINT32_MAX;
     for (unsigned j = 0; j < nearby; ++j)
         if (players[order[j]].id == detail_id) selected = (int)order[j];
     CardRect placed[256];
@@ -661,33 +777,166 @@ done:
     IDirect3DStateBlock9_Apply(saved);
     IDirect3DStateBlock9_Release(saved);
 }
-static void toggle_automatic_mode(void)
+static void toggle_auto_off(void)
 {
-    automatic_mode = !automatic_mode;
-    show_own_rating = !show_own_rating;
-    /* Start manual mode without carrying an outdated target from auto mode. */
+    display_mode = display_mode == DISPLAY_AUTO ? DISPLAY_OFF : DISPLAY_AUTO;
     selected_player_id = UINT32_MAX;
 }
-static void toggle_relative_display(void)
+static const wchar_t *settings_label(unsigned page, unsigned row)
 {
-    show_relative_level = !show_relative_level;
+    static const wchar_t *display[] = {L"等级分显示", L"显示自己的信息", L"显示相对等级", L"评分框位置"};
+    static const wchar_t *markers[] = {L"全体玩家标记", L"绿圈：低于自己多少分", L"红框：高于自己多少分"};
+    static const wchar_t *levels[] = {L"相对7+ 最低分", L"相对6 最低分", L"相对5 最低分", L"相对4 最低分", L"相对3 最低分", L"萌新最高分", L"萌新最多局数"};
+    return page == 0 ? display[row] : page == 1 ? markers[row] : levels[row];
+}
+static unsigned settings_rows(void) { return settings_page == 0 ? 4 : settings_page == 1 ? 3 : 7; }
+static void settings_value(wchar_t value[32], unsigned page, unsigned row)
+{
+    if (page == 0) {
+        switch (row) {
+        case 0: wcscpy(value, display_mode == DISPLAY_AUTO ? L"自动" :
+            display_mode == DISPLAY_MANUAL ? L"手动(F8)" : L"关闭"); return;
+        case 1: wcscpy(value, show_own_rating ? L"开" : L"关"); return;
+        case 2: wcscpy(value, show_relative_level ? L"开" : L"关"); return;
+        default: wcscpy(value, card_position == POSITION_ABOVE ? L"头上" : card_position == POSITION_CENTER ? L"身上" : L"右侧"); return;
+        }
+    }
+    if (page == 1) {
+#ifdef TRUE_RELATIVE_VISUALS
+        if (row == 0) wcscpy(value, lobby_visual_enabled() ? L"开" : L"关");
+        else swprintf(value, 32, L"%d", row == 1 ? lobby_visual_lower_gap() : lobby_visual_higher_gap());
+#else
+        wcscpy(value, L"不可用");
+#endif
+        return;
+    }
+    int numbers[] = {relative_thresholds.relative7plus, relative_thresholds.relative6,
+        relative_thresholds.relative5, relative_thresholds.relative4, relative_thresholds.relative3,
+        relative_thresholds.newbie_rating_max, relative_thresholds.newbie_games_max};
+    swprintf(value, 32, L"%d", numbers[row]);
+}
+static void settings_adjust(int direction)
+{
+    int step = direction * ((GetAsyncKeyState(VK_SHIFT) & 0x8000) ? 10 : 1);
+    if (settings_page == 0) {
+        switch (settings_row) {
+        case 0:
+            display_mode = (DisplayMode)((display_mode + (direction > 0 ? 1 : 2)) % 3);
+            selected_player_id = UINT32_MAX;
+            break;
+        case 1: show_own_rating = !show_own_rating; break;
+        case 2: show_relative_level = !show_relative_level; break;
+        case 3:
+            card_position = (CardPosition)((card_position + (direction > 0 ? 1 : 2)) % 3);
+            card_offset_x = card_offset_y = 0;
+            break;
+        }
+    } else if (settings_page == 1) {
+#ifdef TRUE_RELATIVE_VISUALS
+        bool enabled = lobby_visual_enabled();
+        int lower = lobby_visual_lower_gap(), higher = lobby_visual_higher_gap();
+        if (settings_row == 0) enabled = !enabled;
+        else if (settings_row == 1) lower = bounded(lower + direction * 10, 10, 5000);
+        else higher = bounded(higher + direction * 10, 10, 5000);
+        lobby_visual_configure(enabled, lower, higher);
+#endif
+    } else if (settings_page == 2) {
+        int *numbers[] = {&relative_thresholds.relative7plus, &relative_thresholds.relative6,
+            &relative_thresholds.relative5, &relative_thresholds.relative4, &relative_thresholds.relative3,
+            &relative_thresholds.newbie_rating_max, &relative_thresholds.newbie_games_max};
+        int low = settings_row < 4 ? *numbers[settings_row + 1] : settings_row == 4 ? 1 : 0;
+        int high = settings_row > 0 && settings_row < 5 ? *numbers[settings_row - 1] :
+            settings_row == 5 ? relative_thresholds.relative3 - 1 : 10000;
+        if (settings_row == 6) high = 1000000;
+        *numbers[settings_row] = bounded(*numbers[settings_row] + step * 10, low, high);
+        if (settings_row == 4 && relative_thresholds.newbie_rating_max >= relative_thresholds.relative3)
+            relative_thresholds.newbie_rating_max = relative_thresholds.relative3 - 1;
+    }
+    settings_dirty = true;
+}
+static void settings_close(void)
+{
+    settings_open = false;
+    if (settings_dirty) save_settings();
+}
+static void settings_input(GameInput input, bool foreground, bool chatting, bool f9_down)
+{
+    bool pad_combo = foreground && input.pause > 0 && input.select > 0;
+    bool open_trigger = (f9_down && !f9_was_down && !chatting) || (pad_combo && !pad_menu_was_down && !chatting);
+    f9_was_down = f9_down;
+    pad_menu_was_down = pad_combo;
+    if (open_trigger) {
+        if (settings_open) settings_close();
+        else { settings_open = true; settings_page = 0; settings_row = 0; settings_last_direction = 0; }
+        return;
+    }
+    if (!settings_open || !foreground) return;
+    if (input.b == 1) { settings_close(); return; }
+    if (input.changeCard == 1) {
+        settings_page = (settings_page + 1) % 3;
+        settings_row = 0;
+    }
+    int direction = 0;
+    if (input.verticalAxis < 0) direction = -2;
+    else if (input.verticalAxis > 0) direction = 2;
+    else if (input.horizontalAxis < 0) direction = -1;
+    else if (input.horizontalAxis > 0) direction = 1;
+    if (!direction && input.a == 1) direction = 1;
+    DWORD now = GetTickCount();
+    if (!direction) { settings_last_direction = 0; return; }
+    if (direction != settings_last_direction || now >= settings_repeat_at) {
+        if (direction == -2) settings_row = (settings_row + settings_rows() - 1) % settings_rows();
+        else if (direction == 2) settings_row = (settings_row + 1) % settings_rows();
+        else settings_adjust(direction);
+        settings_repeat_at = now + (direction == settings_last_direction ? 75 : 280);
+    }
+    settings_last_direction = direction;
+}
+static void draw_settings(IDirect3DDevice9 *device)
+{
+    if (!settings_open || !device || FAILED(IDirect3DDevice9_TestCooperativeLevel(device))) return;
+    IDirect3DStateBlock9 *saved = NULL;
+    if (FAILED(IDirect3DDevice9_CreateStateBlock(device, D3DSBT_ALL, &saved))) return;
+    if (!ensure_font(device)) { IDirect3DStateBlock9_Release(saved); return; }
+    const int x = 105, y = 57, width = 430;
+    shape_state(device);
+    rect(device, x, y, width, 358, 0xea101722);
+    rect(device, x, y, 4, 358, 0xff72cae8);
+    rect(device, x, y, width, 2, 0xff507f9c);
+    rect(device, x + 12, y + 68 + (int)settings_row * 30, width - 24, 27, 0x8065a2c5);
+    IDirect3DStateBlock9_Apply(saved);
+    const wchar_t *titles[] = {L"显示", L"玩家标记", L"相对阈值"};
+    wchar_t title[80];
+    swprintf(title, 80, L"真实相对  ·  %ls  (%u/3)", titles[settings_page], settings_page + 1);
+    rating_text(x + 18, y + 13, width - 36, title, 0xffd7f3ff);
+    rating_small_text(x + 18, y + 42, width - 36, L"F9 / Start+Select 关闭     换卡键 下一页", 0xffabc3d4);
+    for (unsigned i = 0; i < settings_rows(); ++i) {
+        wchar_t value[32];
+        settings_value(value, settings_page, i);
+        D3DCOLOR color = i == settings_row ? 0xffffffff : 0xffc5d9e6;
+        rating_text(x + 22, y + 72 + i * 30, 300, settings_label(settings_page, i), color);
+        rating_text(x + 323, y + 72 + i * 30, 86, value, i == settings_row ? 0xffffdc8b : color);
+    }
+    if (settings_page == 0) {
+        rating_small_text(x + 22, y + 250, width - 44, L"F8：手动模式下切换附近玩家", 0xffabc3d4);
+        rating_small_text(x + 22, y + 272, width - 44, L"F10：等级分自动显示 / 关闭", 0xffabc3d4);
+    }
+    rating_small_text(x + 18, y + 334, width - 36, L"方向键调整  ·  确认键切换  ·  取消键保存退出", 0xffabc3d4);
+    IDirect3DStateBlock9_Apply(saved);
+    IDirect3DStateBlock9_Release(saved);
 }
 static int __fastcall process_hook(void *menu, void *unused)
 {
     (void)unused;
     bool foreground = GetForegroundWindow() == GAME_WINDOW;
-    bool f7_down = foreground && (GetAsyncKeyState(VK_F7) & 0x8000);
     bool f8_down = foreground && (GetAsyncKeyState(VK_F8) & 0x8000);
     bool f9_down = foreground && (GetAsyncKeyState(VK_F9) & 0x8000);
     bool f10_down = foreground && (GetAsyncKeyState(VK_F10) & 0x8000);
     bool chatting = ((unsigned char *)menu)[0x1154] != 0;
-#ifdef TRUE_RELATIVE_VISUALS
-    lobby_visual_input(foreground, chatting);
-#endif
-    if (f7_down && !f7_was_down && !chatting)
-        toggle_relative_display();
-    f7_was_down = f7_down;
-    if (f8_down && !f8_was_down && !chatting && !automatic_mode) {
+    GameInput saved_input = GAME_INPUT;
+    bool was_settings_open = settings_open;
+    settings_input(saved_input, foreground, chatting, f9_down);
+    if (f8_down && !f8_was_down && !chatting && !settings_open && display_mode == DISPLAY_MANUAL) {
         VisiblePlayer players[256];
         unsigned order[3];
         unsigned count = copy_players(menu, players);
@@ -695,13 +944,12 @@ static int __fastcall process_hook(void *menu, void *unused)
         cycle_selected(players, order, nearby);
     }
     f8_was_down = f8_down;
-    if (f9_down && !f9_was_down && !chatting)
-        show_own_rating = !show_own_rating;
-    f9_was_down = f9_down;
-    if (f10_down && !f10_was_down && !chatting)
-        toggle_automatic_mode();
+    if (f10_down && !f10_was_down && !chatting && !settings_open)
+        toggle_auto_off();
     f10_was_down = f10_down;
+    if (settings_open || was_settings_open) memset(&GAME_INPUT, 0, sizeof(GameInput));
     int result = original_process(menu);
+    if (settings_open || was_settings_open) GAME_INPUT = saved_input;
     if (!result) selected_player_id = UINT32_MAX;
     return result;
 }
@@ -710,13 +958,14 @@ static int __fastcall render_hook(void *menu, void *unused)
     (void)unused;
     int result = original_render(menu);
     draw_ratings(GAME_DEVICE, menu);
+    draw_settings(GAME_DEVICE);
     return result;
 }
 static void *__fastcall destroy_hook(void *menu, void *unused, unsigned char flag)
 {
     (void)unused;
     selected_player_id = UINT32_MAX;
-    show_own_rating = false;
+    if (settings_open) settings_close();
 #ifdef TRUE_RELATIVE_VISUALS
     lobby_visual_reset();
 #endif

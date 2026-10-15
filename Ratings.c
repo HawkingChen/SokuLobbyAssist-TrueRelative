@@ -7,7 +7,8 @@
 
 #define MAX_JSON (12u * 1024u * 1024u)
 #define MAX_RECORDS 12000u
-#define REFRESH_MS 86400000u
+#define RATING_CACHE_MS 600000u
+#define CLAIM_CACHE_MS 86400000u
 
 typedef struct { int start, end, next; char kind; } Token;
 typedef struct {
@@ -34,6 +35,7 @@ static unsigned manual_count;
 static FILETIME fetched_at;
 static char cache_path[MAX_PATH], map_path[MAX_PATH];
 static char ca_path[MAX_PATH];
+static char ratings_etag[128];
 static char claim_cache_path[MAX_PATH];
 static char claim_profile[129], claim_handle[65];
 static FILETIME claim_checked;
@@ -255,6 +257,14 @@ static bool write_cache(const char *json, size_t length)
     if (!ok) { DeleteFileA(temporary); return false; }
     return MoveFileExA(temporary, cache_path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 }
+static void refresh_cache_timestamp(FILETIME now)
+{
+    HANDLE file = CreateFileA(cache_path, FILE_WRITE_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) return;
+    SetFileTime(file, NULL, NULL, &now);
+    CloseHandle(file);
+}
 // Serialize transfers because the bundled TLS build has shared RNG state.
 static CRITICAL_SECTION download_lock;
 static INIT_ONCE curl_once = INIT_ONCE_STATIC_INIT;
@@ -285,6 +295,28 @@ static void network_log(const char *message)
     CloseHandle(file);
 }
 typedef struct { char *data; size_t size; } Download;
+typedef struct { char etag[128]; } ResponseHeaders;
+static size_t receive_headers(char *data, size_t size, size_t count, void *context)
+{
+    if (size && count > SIZE_MAX / size) return 0;
+    size_t bytes = size * count;
+    ResponseHeaders *headers = context;
+    if (bytes >= 5 && !memcmp(data, "HTTP/", 5)) headers->etag[0] = 0;
+    if (bytes >= 5 && (data[0] == 'E' || data[0] == 'e') &&
+        (data[1] == 'T' || data[1] == 't') &&
+        (data[2] == 'A' || data[2] == 'a') &&
+        (data[3] == 'G' || data[3] == 'g') && data[4] == ':') {
+        size_t begin = 5, end = bytes;
+        while (begin < end && (data[begin] == ' ' || data[begin] == '\t')) ++begin;
+        while (end > begin && (data[end - 1] == '\r' || data[end - 1] == '\n' || data[end - 1] == ' ')) --end;
+        if (end > begin && end - begin < sizeof(headers->etag) &&
+            !memchr(data + begin, '\r', end - begin) && !memchr(data + begin, '\n', end - begin)) {
+            memcpy(headers->etag, data + begin, end - begin);
+            headers->etag[end - begin] = 0;
+        }
+    }
+    return bytes;
+}
 static size_t receive_json(char *data, size_t size, size_t count, void *context)
 {
     Download *download = context;
@@ -300,9 +332,12 @@ static size_t receive_json(char *data, size_t size, size_t count, void *context)
     next[download->size] = 0;
     return bytes;
 }
-static char *fetch_url(const char *url, size_t *length)
+static char *fetch_url_conditional(const char *url, size_t *length, const char *if_none_match,
+                                   char response_etag[128], bool *not_modified)
 {
     *length = 0;
+    if (response_etag) response_etag[0] = 0;
+    if (not_modified) *not_modified = false;
     InitOnceExecuteOnce(&curl_once, initialize_curl, NULL, NULL);
     if (curl_init_result != CURLE_OK) {
         network_log("libcurl initialization failed"); return NULL;
@@ -315,6 +350,14 @@ static char *fetch_url(const char *url, size_t *length)
         return NULL;
     }
     Download download = {0};
+    ResponseHeaders response_headers = {{0}};
+    struct curl_slist *request_headers = NULL;
+    char conditional[160];
+    if (if_none_match && *if_none_match &&
+        snprintf(conditional, sizeof(conditional), "If-None-Match: %s", if_none_match) < (int)sizeof(conditional)) {
+        request_headers = curl_slist_append(NULL, conditional);
+        if (request_headers) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, request_headers);
+    }
     char error[CURL_ERROR_SIZE] = {0};
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error);
@@ -327,28 +370,42 @@ static char *fetch_url(const char *url, size_t *length)
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 25L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_CAINFO, ca_path);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "TrueRelative/0.7.9");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "TrueRelative/0.8.0");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receive_json);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &download);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, receive_headers);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &response_headers);
     CURLcode result = curl_easy_perform(curl);
     long status = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
     last_fetch_error = (DWORD)result;
     char message[640];
     snprintf(message, sizeof(message), "HTTPS %s: curl=%d HTTP=%ld bytes=%lu %s",
-        strstr(url, "/api/ratings") ? "ratings" : "profile lookup", (int)result,
+        strstr(url, "/ratings/") ? "ratings" : "profile lookup", (int)result,
         status, (unsigned long)download.size, result == CURLE_OK ? "OK" :
         (error[0] ? error : curl_easy_strerror(result)));
     network_log(message);
     curl_easy_cleanup(curl);
+    curl_slist_free_all(request_headers);
     LeaveCriticalSection(&download_lock);
+    if (result == CURLE_OK && status == 304 && not_modified) {
+        *not_modified = true;
+        free(download.data);
+        return NULL;
+    }
     if (result != CURLE_OK || !download.size) { free(download.data); return NULL; }
+    if (response_etag) strcpy(response_etag, response_headers.etag);
     *length = download.size;
     return download.data;
 }
-static char *fetch_curl(size_t *length)
+static char *fetch_url(const char *url, size_t *length)
 {
-    return fetch_url("https://soku.cleista.cc/api/ratings?min=1&status=all", length);
+    return fetch_url_conditional(url, length, NULL, NULL, NULL);
+}
+static char *fetch_curl(size_t *length, bool *not_modified, char response_etag[128])
+{
+    return fetch_url_conditional("https://soku.cleista.cc/api/v1/ratings/export.json", length,
+        ratings_etag, response_etag, not_modified);
 }
 static bool parse_claim(const char *json, size_t length, const char *profile, char handle[65])
 {
@@ -387,7 +444,7 @@ static void load_claim_cache(void)
             FILETIME now; GetSystemTimeAsFileTime(&now);
             uint64_t age = filetime_number(now) - (uint64_t)stamp;
             if (strlen(line) < sizeof(claim_profile) && strlen(first) < sizeof(claim_handle) &&
-                stamp && age < (uint64_t)REFRESH_MS * 10000) {
+                stamp && age < (uint64_t)CLAIM_CACHE_MS * 10000) {
                 strcpy(claim_profile, line);
                 strcpy(claim_handle, first);
                 claim_checked.dwLowDateTime = (DWORD)stamp;
@@ -441,7 +498,7 @@ static DWORD WINAPI claim_worker(void *argument)
         strcpy(claim_handle, handle);
         claim_checked = now;
         if (!valid) {
-            uint64_t retry = filetime_number(now) - (uint64_t)(REFRESH_MS - 300000u) * 10000;
+            uint64_t retry = filetime_number(now) - (uint64_t)(CLAIM_CACHE_MS - 300000u) * 10000;
             claim_checked.dwLowDateTime = (DWORD)retry;
             claim_checked.dwHighDateTime = (DWORD)(retry >> 32);
         }
@@ -466,7 +523,7 @@ bool ratings_own_claim(const char *profile_utf8, char handle[65])
     }
     FILETIME now; GetSystemTimeAsFileTime(&now);
     uint64_t age = filetime_number(now) - filetime_number(claim_checked);
-    if (!claim_pending && age >= (uint64_t)REFRESH_MS * 10000) {
+    if (!claim_pending && age >= (uint64_t)CLAIM_CACHE_MS * 10000) {
         char *copy = malloc(strlen(claim_profile) + 1);
         if (copy) {
             strcpy(copy, claim_profile);
@@ -495,7 +552,7 @@ static void load_other_claims(void)
         unsigned long long stamp = strtoull(second, NULL, 10);
         if (!line[0] || strpbrk(line, "\r\n") || strlen(line) >= sizeof(other_claims[0].profile) ||
             strlen(first) >= sizeof(other_claims[0].handle) || !stamp ||
-            filetime_number(now) - (uint64_t)stamp >= (uint64_t)REFRESH_MS * 10000) continue;
+            filetime_number(now) - (uint64_t)stamp >= (uint64_t)CLAIM_CACHE_MS * 10000) continue;
         OtherClaim *entry = &other_claims[other_claim_count++];
         strcpy(entry->profile, line);
         strcpy(entry->handle, first);
@@ -564,7 +621,7 @@ static DWORD WINAPI other_claim_worker(void *unused)
             entry->checked = now;
             entry->valid = true;
         } else {
-            uint64_t retry = filetime_number(now) - (uint64_t)(REFRESH_MS - 300000u) * 10000;
+            uint64_t retry = filetime_number(now) - (uint64_t)(CLAIM_CACHE_MS - 300000u) * 10000;
             entry->checked.dwLowDateTime = (DWORD)retry;
             entry->checked.dwHighDateTime = (DWORD)(retry >> 32);
         }
@@ -609,7 +666,7 @@ bool ratings_other_claim(const char *profile_utf8, char handle[65])
         OtherClaim *entry = &other_claims[index];
         FILETIME now; GetSystemTimeAsFileTime(&now);
         uint64_t age = filetime_number(now) - filetime_number(entry->checked);
-        if (age >= (uint64_t)REFRESH_MS * 10000 && !entry->in_flight) entry->pending = true;
+        if (age >= (uint64_t)CLAIM_CACHE_MS * 10000 && !entry->in_flight) entry->pending = true;
         if (entry->valid && entry->handle[0]) { strcpy(handle, entry->handle); found = true; }
         if (entry->pending && !other_worker_running) {
             other_worker_running = true;
@@ -666,23 +723,35 @@ static DWORD WINAPI ratings_worker(void *unused)
         unsigned count_now = record_count;
         LeaveCriticalSection(&ratings_lock);
         uint64_t age = filetime_number(now) - filetime_number(last);
-        if (count_now && age < (uint64_t)REFRESH_MS * 10000) {
-            Sleep((DWORD)((uint64_t)REFRESH_MS - age / 10000));
+        if (count_now && age < (uint64_t)RATING_CACHE_MS * 10000) {
+            Sleep((DWORD)((uint64_t)RATING_CACHE_MS - age / 10000));
             continue;
         }
         bool refreshed = false;
-        json = fetch_curl(&length);
+        bool not_modified = false;
+        char response_etag[128];
+        json = fetch_curl(&length, &not_modified, response_etag);
+        if (not_modified && count_now) {
+            GetSystemTimeAsFileTime(&now);
+            EnterCriticalSection(&ratings_lock);
+            fetched_at = now;
+            LeaveCriticalSection(&ratings_lock);
+            refresh_cache_timestamp(now);
+            refreshed = true;
+        }
         if (json) {
             Record *rows = NULL; unsigned count = 0;
             if (parse_ratings(json, length, &rows, &count)) {
-                if (!write_cache(json, length)) network_log("ratings cache write failed; using downloaded data in memory");
+                bool saved = write_cache(json, length);
+                if (!saved) network_log("ratings cache write failed; using downloaded data in memory");
+                strcpy(ratings_etag, saved ? response_etag : "");
                 GetSystemTimeAsFileTime(&now);
                 publish(rows, count, now);
                 refreshed = true;
             } else network_log("ratings JSON parse failed; keeping previous cache");
             free(json);
         }
-        Sleep(refreshed ? REFRESH_MS : 60000);
+        Sleep(refreshed ? RATING_CACHE_MS : 60000);
     }
 }
 void ratings_start(HMODULE plugin)
@@ -738,7 +807,7 @@ static bool lookup(const char *profile_utf8, const char *public_name, bool handl
         memcpy(out->char_ratings, r->char_ratings, sizeof(out->char_ratings));
         out->fetched_at = fetched_at;
         FILETIME now; GetSystemTimeAsFileTime(&now);
-        out->stale = filetime_number(now) - filetime_number(fetched_at) > (uint64_t)REFRESH_MS * 10000;
+        out->stale = filetime_number(now) - filetime_number(fetched_at) > (uint64_t)RATING_CACHE_MS * 10000;
     }
     LeaveCriticalSection(&ratings_lock);
     return out->found;

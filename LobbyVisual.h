@@ -7,7 +7,10 @@
 typedef bool (*LobbyVisualLookup)(const VisiblePlayer players[256], unsigned count,
                                   unsigned index, uint32_t local_id, double *rating);
 
-void lobby_visual_input(bool foreground, bool chatting);
+void lobby_visual_configure(bool enabled, int lower_gap, int higher_gap);
+bool lobby_visual_enabled(void);
+int lobby_visual_lower_gap(void);
+int lobby_visual_higher_gap(void);
 void lobby_visual_draw(IDirect3DDevice9 *device, const void *menu,
                        const VisiblePlayer players[256], unsigned count, uint32_t local_id,
                        int translate_x, int translate_y, LobbyVisualLookup lookup);

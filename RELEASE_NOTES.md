@@ -1,10 +1,12 @@
-# 0.7.9
+# 0.8.0
 
-### 修复
-- 修复杀毒软件拦截 `curl.exe` 后，所有玩家评分显示未知的问题。
-- 评分请求改由插件内部完成，但不保证更新后就一定不再被杀毒软件拦截。
+### 新功能
+- 大厅按 F9 打开设置菜单，可切换等级分显示模式、自己的信息、相对等级、评分框位置和全体玩家标记，并调整相对阈值。
+- 全体玩家标记增加绿圈和带“!!!”的红框。
 
-显示和操作功能没有变化，正常使用时可以不更新。
+### 优化
+- 评分改用预生成的完整榜单接口，缓存 10 分钟；榜单未变化时复用本地缓存。
+- 默认相对阈值改为 2800／2500／2300／2000／1800，相对等级默认隐藏；萌新条件为评分不高于 1400 且总局数不多于 100。
 
 支持简体中文联机大厅 0.7.5.2、0.7.5.4。
 
@@ -12,4 +14,4 @@
 
 快捷键说明请参考仓库主页 README。
 
-- [TrueRelative-0.7.9-install.zip：插件安装包](https://github.com/HawkingChen/SokuLobbyAssist-TrueRelative/releases/download/v0.7.9/TrueRelative-0.7.9-install.zip)
+- [TrueRelative-0.8.0-install.zip：插件安装包](https://github.com/HawkingChen/SokuLobbyAssist-TrueRelative/releases/download/v0.8.0/TrueRelative-0.8.0-install.zip)

@@ -15,6 +15,6 @@ relative_3=1800
 ; 相对1萌新条件：评分和总局数都不高于下面的值。
 [Newbie]
 ; 萌新最高评分
-rating_max=1399
+rating_max=1400
 ; 萌新最高总局数
-games_max=99
+games_max=100
