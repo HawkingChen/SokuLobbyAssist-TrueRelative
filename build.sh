@@ -1,6 +1,14 @@
 #!/bin/sh
 set -eu
 cd "$(dirname "$0")"
+VERSION=$(python3 -c '
+import json, re
+with open("mod.json", encoding="utf-8") as source:
+    version = json.load(source)["version"]
+if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?", version):
+    raise SystemExit("Invalid version in mod.json")
+print(version)
+')
 if [ -z "${ZIG:-}" ]; then
   if command -v zig >/dev/null 2>&1; then
     ZIG=zig
@@ -20,12 +28,12 @@ CURL_LIBS="$CURL_ROOT/libcurl.a $CURL_ROOT/libmbedtls.a $CURL_ROOT/libmbedx509.a
 "$ZIG" cc -target x86-windows-gnu -O0 -UNDEBUG -Wall -Wextra -Werror \
   rating_test.c $CURL_FLAGS $CURL_LIBS -o build/RatingTest.exe
 cp third_party/curl/curl-ca-bundle.crt build/
-mkdir -p build/package
-# Remove the obsolete external downloader from reused staging directories.
-rm -f build/package/curl.exe build/launcher-package/SokuLobbyAssist/curl.exe
+# Every archive starts from an empty directory; old staging files are ignored.
+PACKAGE_DIR=$(mktemp -d "$PWD/build/package.XXXXXX")
+trap 'rm -rf -- "$PACKAGE_DIR"' EXIT
+trap 'exit 1' HUP INT TERM
+mkdir "$PACKAGE_DIR/SokuLobbyAssist"
 cp build/TrueRelative.dll mod.json SokuLobbyAssist.ini relative-levels.txt ratings-map.tsv LICENSE \
-  third_party/curl/curl-ca-bundle.crt third_party/libcurl/COPYING.txt third_party/libcurl/MBEDTLS-LICENSE.txt '相对等级阈值说明.txt' build/package/
-mkdir -p build/launcher-package/SokuLobbyAssist
-cp build/package/* build/launcher-package/SokuLobbyAssist/
-rm -f build/TrueRelative-0.8.0-install.zip
-(cd build/launcher-package && zip -qr ../TrueRelative-0.8.0-install.zip SokuLobbyAssist)
+  third_party/curl/curl-ca-bundle.crt third_party/libcurl/COPYING.txt third_party/libcurl/MBEDTLS-LICENSE.txt '相对等级阈值说明.txt' "$PACKAGE_DIR/SokuLobbyAssist/"
+(cd "$PACKAGE_DIR" && zip -qr installer.zip SokuLobbyAssist)
+mv "$PACKAGE_DIR/installer.zip" "build/TrueRelative-$VERSION-install.zip"

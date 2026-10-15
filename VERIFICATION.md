@@ -1,117 +1,99 @@
-# TrueRelative
+# TrueRelative verification notes
 
-Version 0.8.0 adds a lobby settings menu on F9 or Start+Select. The display
-mode has `auto`, `manual`, and `off` states; F8 cycles nearby players only in
-manual mode, while F10 switches auto/off. The menu saves these settings to `SokuLobbyAssist.ini` and edits
-the relative thresholds in `relative-levels.txt`. It also controls the separate
-all-player visual marker module. The Wine fixture test verifies the three mode
-transitions, local-card independence, input masking, and comment-preserving
-config writes. The packaged score boundaries are 2800/2500/2300/2000/1800,
-and relative labels start hidden. Live menu rendering and marker sizing still
-need a game check.
+## Current version: 0.8.0
 
-`sh build.sh` creates the plugin and `build/TrueRelative-0.7.9-install.zip`.
-HTTPS runs inside the 32-bit DLL using statically linked libcurl 8.23.0 and
-Mbed TLS 3.6.7 (Apache-2.0 option). No external executable or additional DLL
-is needed. Keep `curl-ca-bundle.crt` beside the plugin: certificate and hostname
-verification remain enabled. Downloads are limited to HTTPS, 12 MiB, five
-redirects and 25 seconds; transfers are serialized for the TLS RNG's shared state.
-The leaderboard cache lasts 10 minutes, and failures preserve existing data.
-`TrueRelative-network.log` records transport/HTTP failures and cache/parse errors.
-The static dependencies, source archives, licenses and rebuild instructions are
-in `third_party/libcurl/`. The previous curl.exe helper is no longer shipped.
+F9 or Start+Select opens the lobby settings menu. F8 selects nearby players
+in manual mode; F10 switches automatic display on/off independently of the
+local player card. The menu controls the local card, relative labels, card
+placement, rating thresholds, and optional all-player markers. Settings are
+saved to `SokuLobbyAssist.ini` and `relative-levels.txt`.
 
-The plugin accepts only the verified Chinese lobby 0.7.5.2 DLL with SHA-256
-`dbce5a6a59e94e2d4c43bcfbd69fce35ad9804a4dd20e76aa28417a3c6ab28cd` or the
-installed 0.7.5.4 DLL with SHA-256
-`526d8437c00a85cdbeb5388ea8bfc18229cb649278f079e000e2799d5de50c87`.
-The 0.7.5.4 `InLobbyMenu` vtable was located from its MSVC RTTI and checked
-against the four function pointers at RVA `0x2129a4`: `0x104f60`, `0x1059b0`,
-`0x119dc0`, and `0x11bc20`. The vtable location and first two methods remain
-unchanged from 0.7.5.2; the last two methods moved by `0x40` bytes. The plugin
-has a separate exact vtable table for each supported hash and rejects any other
-binary. Player records are still expected to use the 0.7.5.2 layout; the new
-build's lobby menu accesses the same nearby state offsets, but live multiplayer
-rendering on 0.7.5.4 still needs an in-game check.
-The player vector at menu offset `0x220` uses 100-byte
-records: game profile name at `+4`, position at `+0x3c/+0x40`, and battle
-status at `+0x44`. The render offset is read from `+0x198/+0x19c`; the
-chat-editing flag from `+0x1154` gates F8. These offsets were checked against
-the 0.7.5.2 DLL disassembly and synthetic memory fixtures. The in-game
-visual positions still require observation.
+Relative labels and all-player markers start disabled. The packaged relative
+boundaries are 2800/2500/2300/2000/1800. The newbie rule is rating <= 1400 and
+matches <= 100; other ratings below the relative-3 boundary show 相对<3.
+The cards show the three most-played characters with abbreviated Chinese names.
+Repeated lobby records are merged by player ID. Only the selected nearby
+player and optional local-player card receive cards; there are no additional
+compact waiting-player cards. Markers use a green halo or a red frame with !!!.
+F7 has no assigned action in this version.
 
-Version 0.7.2 merges repeated lobby records with the same player ID before
-selecting or drawing cards, preferring a waiting record. This prevents one
-player from receiving both a compact and an F8 detail card in one frame.
-Version 0.7.4 draws detailed cards first and moves compact cards to free nearby
-positions, suppressing a compact card when no clear position is available.
-Detailed cards label the overall rating, separate it from the character list with
-a thin line, and use the 2250 boundary between 相对5 and 相对6.
+## Build and packaging
 
-The ratings worker fetches the prebuilt full export endpoint
-`https://soku.cleista.cc/api/v1/ratings/export.json` once and refreshes it
-after 10 minutes with `If-None-Match` when an ETag is known. HTTP 304 reuses
-the local records and renews their cache timestamp. It stores `ratings-cache.json`
-next to the plugin. A failed
-refresh retains the old records and retries after one minute. The overlay
-labels stale results with the cache timestamp. A unique `playedAs` match takes
-priority; a unique display-name match is accepted, while duplicates are unknown.
-`ratings-map.tsv` accepts `local game profile<TAB>public handle or unique name` lines for
-manual association after a game restart.
+Run `sh build.sh` with Python 3, zip, and Zig 0.14.1 available. The script uses
+`ZIG` if set, otherwise Zig from PATH or `zig-x86_64-linux-0.14.1/zig`.
+It reads the version from `mod.json` and creates
+`build/TrueRelative-<version>-install.zip` (currently 0.8.0).
+Each package uses a new temporary directory and an explicit file list, so
+files left in previous staging directories cannot enter the archive. A complete
+ZIP replaces the local output only after packaging succeeds.
+The archive has a single `SokuLobbyAssist/` top-level directory and includes
+MIT `LICENSE`, curl `COPYING.txt`, and `MBEDTLS-LICENSE.txt`.
+The MIT file was added after the published v0.8.0 tag; the existing published
+0.8.0 installer has not been replaced with this newly packaged archive.
 
-Version 0.7 shows a player name, score and relative level in a compact translucent card.
-The total-score row also shows RD after the score in a smaller font. `relative-levels.txt`
-holds editable score thresholds and the 相对1萌新 game-count rule; edits take effect
-after restarting the game.
-F8 details show the three most played characters using Chinese names; F9 toggles
-the local player's separate card. F10 toggles automatic selection of the nearest
-player and the local-player card together, both enabled by default; the distance is
-measured from the local avatar. With automatic mode off, F8 manually cycles nearby
-players. Only the selected nearby player and optional local-player card are drawn;
-compact waiting-player cards are disabled. `SokuLobbyAssist.ini` sets avatar card placement
-(`above`, `center`, or `right`), offsets, the own-card screen position, and an optional
-public account name or handle for the local player.
-When no own account is configured, the plugin asks the public name lookup endpoint
-for the local game profile name once, then caches the claimed handle for one day.
-The lookup runs off the render thread; an explicit account setting still overrides it.
-For other visible players whose direct leaderboard lookup fails, the plugin queues one
-public claimed-name lookup per unique profile. It processes requests serially and caches
-positive and negative answers for a day in `other-claim-cache.tsv`. Duplicate names
-visible in the lobby remain unknown. A score of at most 1400 with at most 100 total
-games is shown as 相对1萌新; the remaining scores below 1600 are 相对<3.
-The score card omits matching diagnostics. F7 toggles the relative-tier label; it is
-enabled by default. The network preflight code is no longer part of this plugin; no
-game join function is patched.
+## Lobby compatibility
 
-`python3 test_ratings.py` passed under GE-Proton10-12 with assertions enabled:
-version rejection, player layout, stable F8 selection across movement,
-local-player exclusion while the camera pans, rating matching by game profile
-and explicit account, duplicate rejection, and stale cache.
-`RatingTest.exe --fetch`
-downloaded and parsed 7,102 live records through the built-in library for 0.7.9.
-Cache write/read, bounded response buffers, rejecting a missing CA bundle, and
-queued claimed-name lookup passed under GE-Proton10-12. The tests ran without
-`build/curl.exe`. Schannel was tried and failed in this Wine prefix, so the final
-build uses Mbed TLS. Native Windows and third-party antivirus have not yet been
-tested for this release.
+The plugin accepts these verified Chinese lobby binaries:
 
-For direct GE-Proton launches from this shell, the 32-bit Steam runtime library
-path must be added after `/usr/lib32:/usr/lib` in `LD_LIBRARY_PATH`; otherwise
-the game exits during graphics initialization. With that environment, the
-isolated game copy reached a window with all optional modules disabled. The
-original lobby 0.7.5.2 alone exits during its module initialization, with the
-test plugin disabled. The full original module set also exits at lobby
-initialization. A prior isolated startup loaded the plugin and passed its
-version/vtable guard, but the game exited before a lobby could be entered.
-The cause of the lobby startup failure under direct Wine remains unresolved.
-Therefore desktop multiplayer, controller, game mode, and avatar placement remain
-unverified in the isolated environment. After the user confirmed the normal Steam launch reaches the lobby,
-the test package was installed and enabled for the next start. The previous
-`ModLoaderSettings.json` is saved at
-`build/ModLoaderSettings.before-SokuLobbyAssist.json`.
+| Lobby version | SHA-256 |
+| --- | --- |
+| 0.7.5.2 | `dbce5a6a59e94e2d4c43bcfbd69fce35ad9804a4dd20e76aa28417a3c6ab28cd` |
+| 0.7.5.4 | `526d8437c00a85cdbeb5388ea8bfc18229cb649278f079e000e2799d5de50c87` |
 
-After an eventual installation, disable by setting
-`modules/SokuLobbyAssist/TrueRelative.dll` to `"enabled": false` in
-`ModLoaderSettings.json`; restoration is enabling that entry again. Removing
-the `SokuLobbyAssist` folder also removes the plugin. The existing lobby DLL
-is never modified.
+Each supported binary has a checked vtable entry set; other binaries are
+rejected. `InLobbyMenu` has its vtable at RVA `0x2129a4`. The four entries are
+`0x104f60`, `0x1059b0`, `0x119d80`, `0x11bbe0` in 0.7.5.2 and
+`0x104f60`, `0x1059b0`, `0x119dc0`, `0x11bc20` in 0.7.5.4.
+
+The player vector at menu offset `0x220` uses 100-byte records: profile name
+at `+4`, position at `+0x3c/+0x40`, and battle status at `+0x44`.
+Render offsets are at `+0x198/+0x19c`; the chat-editing flag is at `+0x1154`.
+These layouts were checked using disassembly and synthetic memory fixtures.
+The user confirmed the updated lobby works in the normal game launch.
+The supplied 0.8.0 screenshots show the menu, rating cards, green halo and
+red danger marker in the lobby; redacted examples are in `docs/screenshots/`.
+These observations do not replace tests of every avatar size or controller mode.
+
+## Ratings and HTTPS
+
+HTTPS runs inside the 32-bit DLL using static libcurl 8.23.0 and Mbed TLS 3.6.7
+under its Apache-2.0 option. Sources, licenses and rebuild instructions are in
+`third_party/libcurl/`. Keep `curl-ca-bundle.crt` beside the plugin.
+Certificate and hostname verification are enabled. Transfers are limited to
+HTTPS, 12 MiB, five redirects and 25 seconds, and serialized for the TLS RNG.
+`TrueRelative-network.log` records transport, HTTP, cache and parse failures.
+
+The worker fetches `https://soku.cleista.cc/api/v1/ratings/export.json` and
+refreshes after 10 minutes using `If-None-Match` when an ETag is available.
+HTTP 304 reuses local records and renews their cache timestamp. Failed refreshes
+retain the old data and retry after one minute. Stale cards show the cache time.
+The leaderboard cache is `ratings-cache.json` beside the plugin.
+
+Unique profile (`playedAs`) matches take priority over display-name matches;
+ambiguous matches remain unknown. `ratings-map.tsv` supports explicit local
+profile-to-account associations. An explicit local account setting overrides
+automatic lookup. Otherwise unmatched local and nearby player profiles are
+looked up asynchronously, with positive and negative claimed-name results cached
+for one day. Other-player mappings are stored in `other-claim-cache.tsv`.
+
+## Verification record and limits
+
+Before the 0.8.0 release, `sh build.sh` and `python3 test_ratings.py` passed
+under GE-Proton10-12. The fixture suite checks version rejection, player layout,
+selection across movement, camera-relative local-player exclusion, profile and
+account matching, ambiguous-name rejection, stale cache, display mode transitions,
+local-card independence, input masking, and comment-preserving config writes.
+Network checks cover cache read/write, response-size limits, rejection of a
+missing CA bundle, and queued claimed-name lookups. Export revalidation returned
+HTTP 304. The suite uses the installed supported lobby DLL and the rejected
+0.7.5.0 fixture in `test_fixtures/`.
+
+Earlier direct-Wine launches of an isolated game copy failed during lobby
+initialization even without this plugin. That isolated-launch problem was not
+resolved; the subsequent normal Steam launch and user screenshots are separate
+positive evidence. Native Windows antivirus coverage and a complete SteamOS
+desktop/game-mode controller test matrix have not been recorded for 0.8.0.
+
+Disable 真实相对 in SokuLauncher plugin settings to turn the plugin off;
+re-enable it to restore it. No on-disk lobby DLL is modified, and the former
+network preflight feature is absent.
