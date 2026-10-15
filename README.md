@@ -16,5 +16,3 @@
 - F10：切换自动显示附近玩家及自己的评分框。
 
 `relative-levels.txt` 可以用来调整相对等级的分数线。
-
-评分全部显示未知时，可查看插件目录中的 `TrueRelative-network.log` 排查下载错误。
