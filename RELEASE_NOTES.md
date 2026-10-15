@@ -8,6 +8,8 @@
 
 支持简体中文联机大厅 0.7.5.2、0.7.5.4。
 
-安装：通过 SokuLauncher“设置 - 下载”安装后，在插件设置里启用“真实相对”；也可以解压到游戏的 `modules` 目录。
+安装：可通过 SokuLauncher“设置 - 下载”安装，也可以解压到游戏的 `modules` 目录。安装完成后，在插件设置里启用“真实相对”。
+
+快捷键说明请参考仓库主页 README。
 
 - [TrueRelative-0.7.9-install.zip：插件安装包](https://github.com/HawkingChen/SokuLobbyAssist-TrueRelative/releases/download/v0.7.9/TrueRelative-0.7.9-install.zip)
