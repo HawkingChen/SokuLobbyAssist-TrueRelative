@@ -354,16 +354,18 @@ static void rating_score_line(int x, int y, int width, double score, double rd,
 }
 static D3DCOLOR rating_color(double score)
 {
-    if (score >= 2500) return 0xffff7088;
-    if (score >= 2200) return 0xffe794f5;
-    if (score >= 2000) return 0xffffd071;
-    if (score >= 1800) return 0xff8bd7ff;
-    if (score >= 1600) return 0xffa7e69b;
+    if (score >= relative_thresholds.relative7plus) return 0xffff7088;
+    if (score >= relative_thresholds.relative6) return 0xffe794f5;
+    if (score >= relative_thresholds.relative5) return 0xffffd071;
+    if (score >= relative_thresholds.relative4) return 0xff8bd7ff;
+    if (score >= relative_thresholds.relative3) return 0xffa7e69b;
     return 0xffc5cfdd;
 }
 static D3DCOLOR total_rating_color(double score, unsigned games)
 {
-    if (score < 1400 && games < 100) return 0xffa4e0b6;
+    if (score < relative_thresholds.relative3 &&
+        score <= relative_thresholds.newbie_rating_max &&
+        games <= (unsigned)relative_thresholds.newbie_games_max) return 0xffa4e0b6;
     return rating_color(score);
 }
 static int bounded(int value, int low, int high);
