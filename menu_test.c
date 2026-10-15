@@ -12,7 +12,7 @@ int main(int argc, char **argv)
     assert(show_relative_level);
     assert(rating_color(2500) == 0xffff7088);
     assert(rating_color(2499) == 0xffe794f5);
-    assert(rating_color(2200) == 0xffe794f5);
+    assert(rating_color(2200) == 0xffffd071);
     assert(rating_color(2000) == 0xffffd071);
     assert(rating_color(1800) == 0xff8bd7ff);
     assert(rating_color(1600) == 0xffa7e69b);
@@ -43,6 +43,17 @@ int main(int argc, char **argv)
     assert(!wcscmp(relative_level(2099, 100), L"相对4"));
     assert(!wcscmp(relative_level(1299, 49), L"相对1萌新"));
     assert(!wcscmp(relative_level(1299, 50), L"相对<3"));
+    assert(rating_color(2599) == 0xffe794f5);
+    assert(rating_color(2300) == 0xffe794f5);
+    assert(rating_color(2299) == 0xffffd071);
+    assert(total_rating_color(1299, 49) == 0xffa4e0b6);
+    assert(total_rating_color(1299, 50) == 0xffc5cfdd);
+#ifdef TRUE_RELATIVE_VISUALS
+    assert(lobby_visual_relation(2000, 1901) == 0);
+    assert(lobby_visual_relation(2000, 1900) == 1);
+    assert(lobby_visual_relation(2000, 2299) == 0);
+    assert(lobby_visual_relation(2000, 2300) == 2);
+#endif
     DeleteFileA(temp_file);
     assert(!wcscmp(character_name_zh("reimu"), L"灵梦"));
     assert(!wcscmp(character_name_zh("youmu"), L"妖梦"));

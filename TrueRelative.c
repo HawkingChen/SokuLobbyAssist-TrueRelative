@@ -1,5 +1,9 @@
 #define COBJMACROS
 #include "Ratings.h"
+#include "LobbyPlayer.h"
+#ifdef TRUE_RELATIVE_VISUALS
+#include "LobbyVisual.h"
+#endif
 #include <d3d9.h>
 #include <d3dx9core.h>
 #include <wincrypt.h>
@@ -163,7 +167,6 @@ static void release_font(void)
     if (small_font) { ID3DXFont_Release(small_font); small_font = NULL; }
     font_device = NULL;
 }
-typedef struct { uint32_t id, x, y; unsigned char status; char name[129]; } VisiblePlayer;
 static bool readable(const void *pointer, size_t length)
 {
     MEMORY_BASIC_INFORMATION info;
@@ -440,7 +443,7 @@ static void load_overlay_settings(HMODULE module)
     own_y = bounded((int)GetPrivateProfileIntA("OwnRating", "y", 12, overlay_config_path), 4, 460);
     load_own_account();
 }
-static void rating_card(IDirect3DDevice9 *device, int x, int y, int width, int height, D3DCOLOR accent)
+static void shape_state(IDirect3DDevice9 *device)
 {
     IDirect3DDevice9_SetVertexShader(device, NULL);
     IDirect3DDevice9_SetPixelShader(device, NULL);
@@ -460,6 +463,10 @@ static void rating_card(IDirect3DDevice9 *device, int x, int y, int width, int h
     IDirect3DDevice9_SetRenderState(device, D3DRS_CULLMODE, D3DCULL_NONE);
     IDirect3DDevice9_SetRenderState(device, D3DRS_SCISSORTESTENABLE, FALSE);
     IDirect3DDevice9_SetRenderState(device, D3DRS_COLORWRITEENABLE, 15);
+}
+static void rating_card(IDirect3DDevice9 *device, int x, int y, int width, int height, D3DCOLOR accent)
+{
+    shape_state(device);
     rect(device, x, y, width, height, 0xb8111b2a);
     rect(device, x, y, 3, height, accent);
     rect(device, x + 3, y, width - 3, 1, 0x9aa4c5d8);
@@ -517,6 +524,35 @@ static void wide_player_name(wchar_t out[129], const char *name)
         !MultiByteToWideChar(932, 0, name, -1, out, 129))
         wcscpy(out, L"玩家");
 }
+static bool match_player(const VisiblePlayer players[256], unsigned count, unsigned index,
+                         uint32_t local_id, RatingMatch *match)
+{
+    bool own = players[index].id == local_id;
+    unsigned duplicates = 0;
+    for (unsigned j = 0; j < count; ++j)
+        if (same_rating_name(players[index].name, players[j].name)) ++duplicates;
+    if (own && own_account[0]) return ratings_lookup_public(own_account, match);
+    if (own) {
+        char handle[65];
+        if (ratings_own_claim(players[index].name, handle))
+            return ratings_lookup_handle(handle, match);
+        return duplicates == 1 && ratings_lookup(players[index].name, match);
+    }
+    if (duplicates != 1) return false;
+    if (ratings_lookup(players[index].name, match)) return true;
+    char handle[65];
+    return ratings_other_claim(players[index].name, handle) && ratings_lookup_handle(handle, match);
+}
+#ifdef TRUE_RELATIVE_VISUALS
+static bool visual_rating(const VisiblePlayer players[256], unsigned count, unsigned index,
+                          uint32_t local_id, double *rating)
+{
+    RatingMatch match;
+    if (!match_player(players, count, index, local_id, &match)) return false;
+    *rating = match.rating;
+    return true;
+}
+#endif
 static void draw_ratings(IDirect3DDevice9 *device, void *menu)
 {
     if (!device || FAILED(IDirect3DDevice9_TestCooperativeLevel(device))) return;
@@ -531,13 +567,16 @@ static void draw_ratings(IDirect3DDevice9 *device, void *menu)
     if (zoom < 0.99f || zoom > 1.01f) goto done;
     int translate_x = *(const int *)(object + 0x198);
     int translate_y = *(const int *)(object + 0x19c);
+    uint32_t local_id = local_player_id(object);
+#ifdef TRUE_RELATIVE_VISUALS
+    lobby_visual_draw(device, menu, players, count, local_id, translate_x, translate_y, visual_rating);
+#endif
     unsigned order[3] = {0};
     unsigned nearby = nearby_players(menu, players, count, order);
     int selected = -1;
     uint32_t detail_id = automatic_mode && nearby ? players[order[0]].id : selected_player_id;
     for (unsigned j = 0; j < nearby; ++j)
         if (players[order[j]].id == detail_id) selected = (int)order[j];
-    uint32_t local_id = local_player_id(object);
     CardRect placed[256];
     unsigned placed_count = 0;
     /* Draw only the selected nearby player and the optional local-player card. */
@@ -550,26 +589,8 @@ static void draw_ratings(IDirect3DDevice9 *device, void *menu)
         int avatar_x = (int)players[i].x + translate_x;
         int avatar_y = (int)players[i].y + translate_y;
         if (!pinned_own && (avatar_x < -16 || avatar_x > 656 || avatar_y < -16 || avatar_y > 520)) continue;
-        int duplicates = 0;
-        for (unsigned j = 0; j < count; ++j)
-            if (same_rating_name(players[i].name, players[j].name)) ++duplicates;
         RatingMatch match;
-        bool found = false;
-        if (own && own_account[0]) found = ratings_lookup_public(own_account, &match);
-        else if (own) {
-            char handle[65];
-            bool claimed = ratings_own_claim(players[i].name, handle);
-            if (claimed)
-                found = ratings_lookup_handle(handle, &match);
-            else if (duplicates == 1) found = ratings_lookup(players[i].name, &match);
-        } else if (duplicates == 1) {
-            found = ratings_lookup(players[i].name, &match);
-            if (!found) {
-                char handle[65];
-                if (ratings_other_claim(players[i].name, handle))
-                    found = ratings_lookup_handle(handle, &match);
-            }
-        }
+        bool found = match_player(players, count, i, local_id, &match);
         int width = detailed ? 206 : 180;
         SYSTEMTIME stamp = {0};
         bool show_stamp = false;
@@ -660,6 +681,9 @@ static int __fastcall process_hook(void *menu, void *unused)
     bool f9_down = foreground && (GetAsyncKeyState(VK_F9) & 0x8000);
     bool f10_down = foreground && (GetAsyncKeyState(VK_F10) & 0x8000);
     bool chatting = ((unsigned char *)menu)[0x1154] != 0;
+#ifdef TRUE_RELATIVE_VISUALS
+    lobby_visual_input(foreground, chatting);
+#endif
     if (f7_down && !f7_was_down && !chatting)
         toggle_relative_display();
     f7_was_down = f7_down;
@@ -693,6 +717,9 @@ static void *__fastcall destroy_hook(void *menu, void *unused, unsigned char fla
     (void)unused;
     selected_player_id = UINT32_MAX;
     show_own_rating = false;
+#ifdef TRUE_RELATIVE_VISUALS
+    lobby_visual_reset();
+#endif
     release_font();
     return original_destroy(menu, flag);
 }
