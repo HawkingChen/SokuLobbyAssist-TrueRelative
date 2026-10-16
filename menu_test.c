@@ -213,6 +213,15 @@ int main(int argc, char **argv)
     assert(GAME_INPUT.horizontalAxis == 1 && GAME_INPUT.a == 1);
     settings_open = false;
     settings_dirty = false;
+    display_mode = DISPLAY_OFF;
+    show_own_rating = false;
+#ifdef TRUE_RELATIVE_VISUALS
+    lobby_visual_configure(false, 100, 300);
+#endif
+    auto_target.current = 42;
+    /* A bogus device/menu must never be touched when all overlays are off. */
+    draw_ratings((IDirect3DDevice9 *)(uintptr_t)1, (void *)(uintptr_t)1);
+    assert(auto_target.current == UINT32_MAX);
     puts("player layout, three display modes, own-card independence and input masking: OK");
     return 0;
 }

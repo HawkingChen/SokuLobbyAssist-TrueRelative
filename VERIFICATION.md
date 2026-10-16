@@ -116,3 +116,11 @@ network preflight feature is absent.
 原实现只检查游戏映射后的 pause/select 动作，不能据此识别物理 Start/Select。新增动态加载 XInput 并逐台检查 Start+Back（Select）组合，保留游戏动作兼容路径。无 XInput 时仍可用 F9 和原动作映射。聊天框打开及游戏不在前台时不触发；按住仅切换一次，释放后才能再次切换。
 
 Linux 可运行 `cc -std=c11 -Wall -Wextra -Werror pad_shortcut_test.c -o /tmp/pad_shortcut_test && /tmp/pad_shortcut_test`，验证实体按钮掩码、单键不触发、按住去重、释放重按、聊天及前台限制。MenuTest 新增游戏 pause/select 均未绑定时的物理组合开关回归。Steam Deck 的 Steam Input/Proton 实机尚需用户验证；纯 DirectInput 设备若未转换为 XInput，物理读取路径不覆盖。
+
+## Render and lookup overhead
+
+Rating lookups keep a bounded 64-entry cache of matching record indices, including misses and ambiguous results. Profile, public-name and handle-only lookups use separate keys; publishing a new leaderboard clears all entries under the same lock. Cached lookups still recompute freshness from the current timestamp, including HTTP 304 updates. No heap allocations are added to frame-by-frame lookup. This reduces repeated scans for displayed players; cache misses and capacity eviction still use the original matching rules.
+
+When nearby cards, the own card and markers are all off, draw_ratings returns before inspecting the device, copying players or allocating a graphics state block. Menu drawing and controller shortcuts remain active. Background rating refresh is unchanged.
+
+Native cache tests: `cc -std=c11 -Wall -Wextra -Werror match_cache_test.c -o /tmp/match_cache_test && /tmp/match_cache_test`. RatingTest adds snapshot invalidation checks for positive and negative matches; MenuTest checks the disabled-overlay early return. Native tests and cross-compilation are distinct from executing the Windows test programs or measuring game frame times.

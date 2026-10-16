@@ -677,6 +677,14 @@ static bool visual_rating(const VisiblePlayer players[256], unsigned count, unsi
 #endif
 static void draw_ratings(IDirect3DDevice9 *device, void *menu)
 {
+    bool markers_enabled = false;
+#ifdef TRUE_RELATIVE_VISUALS
+    markers_enabled = lobby_visual_enabled();
+#endif
+    if (display_mode == DISPLAY_OFF && !show_own_rating && !markers_enabled) {
+        auto_target_reset(&auto_target);
+        return;
+    }
     if (!device || FAILED(IDirect3DDevice9_TestCooperativeLevel(device))) return;
     VisiblePlayer players[256];
     unsigned count = copy_players(menu, players);

@@ -1,4 +1,5 @@
 #include "Ratings.h"
+#include "MatchCache.h"
 #include "LogFile.h"
 #include <stdint.h>
 #include <stdio.h>
@@ -31,6 +32,7 @@ typedef struct {
 static CRITICAL_SECTION ratings_lock;
 static Record *records;
 static unsigned record_count;
+static MatchCache match_cache;
 static Manual manual[256];
 static unsigned manual_count;
 static FILETIME fetched_at;
@@ -680,6 +682,7 @@ static void publish(Record *rows, unsigned count, FILETIME time)
     EnterCriticalSection(&ratings_lock);
     Record *old = records;
     records = rows; record_count = count; fetched_at = time;
+    match_cache_clear(&match_cache);
     LeaveCriticalSection(&ratings_lock);
     free(old);
 }
@@ -781,22 +784,30 @@ static bool lookup(const char *profile_utf8, const char *public_name, bool handl
     const char *mapped = public_name;
     if (!mapped) for (unsigned i = 0; i < manual_count; ++i)
         if (!strcmp(profile_utf8, manual[i].profile)) { mapped = manual[i].target; break; }
-    int found = -1, matches = 0;
-    for (int pass = mapped ? 0 : 2; pass <= (mapped ? (handle_only ? 0 : 1) : 3); ++pass) {
-        found = -1; matches = 0;
-        for (unsigned i = 0; i < record_count; ++i) {
-            bool yes = pass == 0 ? (records[i].handle[0] && !strcmp(records[i].handle, mapped)) :
-                       pass == 1 ? !strcmp(records[i].name, mapped) :
-                       pass == 2 ? (records[i].played_as[0] && !strcmp(records[i].played_as, profile_utf8)) :
-                                   !strcmp(records[i].name, profile_utf8);
-            if (yes) { found = (int)i; ++matches; }
+    const char *cache_key = mapped ? mapped : profile_utf8;
+    unsigned cache_kind = mapped ? (handle_only ? 2u : 1u) : 0u;
+    int found = -1, matched_pass = -1;
+    if (!match_cache_get(&match_cache, cache_key, cache_kind, &found, &matched_pass)) {
+        for (int pass = mapped ? 0 : 2; pass <= (mapped ? (handle_only ? 0 : 1) : 3); ++pass) {
+            int matches = 0;
+            for (unsigned i = 0; i < record_count; ++i) {
+                bool yes = pass == 0 ? (records[i].handle[0] && !strcmp(records[i].handle, mapped)) :
+                           pass == 1 ? !strcmp(records[i].name, mapped) :
+                           pass == 2 ? (records[i].played_as[0] && !strcmp(records[i].played_as, profile_utf8)) :
+                                       !strcmp(records[i].name, profile_utf8);
+                if (yes) { found = (int)i; ++matches; }
+            }
+            if (matches) {
+                if (matches == 1) matched_pass = pass;
+                else found = -1; /* Ambiguity remains unknown, including cache hits. */
+                break;
+            }
         }
-        if (matches) {
-            if (matches == 1) { out->manual = pass < 2; out->same_name = pass == 3; }
-            break;
-        }
+        match_cache_put(&match_cache, cache_key, cache_kind, found, matched_pass);
     }
-    if (matches == 1) {
+    if (found >= 0) {
+        out->manual = matched_pass < 2;
+        out->same_name = matched_pass == 3;
         const Record *r = &records[found];
         out->found = true; out->rating = r->rating; out->rd = r->rd; out->games = r->games;
         out->char_count = r->char_count;

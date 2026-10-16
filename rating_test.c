@@ -160,6 +160,16 @@ int main(int argc, char **argv)
     fetched_at.dwHighDateTime = (DWORD)(old >> 32);
     LeaveCriticalSection(&ratings_lock);
     assert(ratings_lookup("profile A", &match) && match.stale);
+    /* Cached misses and matches must not survive a new leaderboard snapshot. */
+    assert(!ratings_lookup("new profile", &match));
+    Record *replacement = calloc(1, sizeof(*replacement));
+    assert(replacement);
+    strcpy(replacement->name, "Replacement");
+    strcpy(replacement->played_as, "new profile");
+    replacement->rating = 1900;
+    publish(replacement, 1, now);
+    assert(ratings_lookup("new profile", &match) && match.rating == 1900);
+    assert(!ratings_lookup("profile A", &match));
     if (argc == 2) {
         size_t length = 0;
         char *json = read_file(argv[1], &length, NULL);
