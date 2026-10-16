@@ -1,6 +1,7 @@
 #define COBJMACROS
 #include "Ratings.h"
 #include "LobbyPlayer.h"
+#include "AutoTarget.h"
 #ifdef TRUE_RELATIVE_VISUALS
 #include "LobbyVisual.h"
 #endif
@@ -57,6 +58,7 @@ static DisplayMode display_mode = DISPLAY_AUTO;
 static bool show_own_rating = true;
 static bool show_relative_level;
 static uint32_t selected_player_id = UINT32_MAX;
+static AutoTarget auto_target = {UINT32_MAX, UINT32_MAX, 0};
 typedef enum { POSITION_ABOVE, POSITION_CENTER, POSITION_RIGHT } CardPosition;
 static CardPosition card_position = POSITION_ABOVE;
 static int card_offset_x, card_offset_y;
@@ -673,13 +675,13 @@ static void draw_ratings(IDirect3DDevice9 *device, void *menu)
     if (!device || FAILED(IDirect3DDevice9_TestCooperativeLevel(device))) return;
     VisiblePlayer players[256];
     unsigned count = copy_players(menu, players);
-    if (!count) return;
+    if (!count) { auto_target_reset(&auto_target); return; }
     IDirect3DStateBlock9 *saved = NULL;
     if (FAILED(IDirect3DDevice9_CreateStateBlock(device, D3DSBT_ALL, &saved))) return;
     if (!ensure_font(device)) { IDirect3DStateBlock9_Release(saved); return; }
     const unsigned char *object = menu;
     float zoom = *(const float *)(object + 0x20c);
-    if (zoom < 0.99f || zoom > 1.01f) goto done;
+    if (zoom < 0.99f || zoom > 1.01f) { auto_target_reset(&auto_target); goto done; }
     int translate_x = *(const int *)(object + 0x198);
     int translate_y = *(const int *)(object + 0x19c);
     uint32_t local_id = local_player_id(object);
@@ -689,8 +691,15 @@ static void draw_ratings(IDirect3DDevice9 *device, void *menu)
     unsigned order[3] = {0};
     unsigned nearby = nearby_players(menu, players, count, order);
     int selected = -1;
-    uint32_t detail_id = display_mode == DISPLAY_AUTO && nearby ? players[order[0]].id :
-        display_mode == DISPLAY_MANUAL ? selected_player_id : UINT32_MAX;
+    uint32_t nearby_ids[3];
+    for (unsigned j = 0; j < nearby; ++j) nearby_ids[j] = players[order[j]].id;
+    uint32_t detail_id;
+    if (display_mode == DISPLAY_AUTO)
+        detail_id = auto_target_update(&auto_target, nearby_ids, nearby, GetTickCount());
+    else {
+        auto_target_reset(&auto_target);
+        detail_id = display_mode == DISPLAY_MANUAL ? selected_player_id : UINT32_MAX;
+    }
     for (unsigned j = 0; j < nearby; ++j)
         if (players[order[j]].id == detail_id) selected = (int)order[j];
     CardRect placed[256];
@@ -779,6 +788,7 @@ done:
 }
 static void toggle_auto_off(void)
 {
+    auto_target_reset(&auto_target);
     display_mode = display_mode == DISPLAY_AUTO ? DISPLAY_OFF : DISPLAY_AUTO;
     selected_player_id = UINT32_MAX;
 }
@@ -821,6 +831,7 @@ static void settings_adjust(int direction)
     if (settings_page == 0) {
         switch (settings_row) {
         case 0:
+            auto_target_reset(&auto_target);
             display_mode = (DisplayMode)((display_mode + (direction > 0 ? 1 : 2)) % 3);
             selected_player_id = UINT32_MAX;
             break;
@@ -950,7 +961,7 @@ static int __fastcall process_hook(void *menu, void *unused)
     if (settings_open || was_settings_open) memset(&GAME_INPUT, 0, sizeof(GameInput));
     int result = original_process(menu);
     if (settings_open || was_settings_open) GAME_INPUT = saved_input;
-    if (!result) selected_player_id = UINT32_MAX;
+    if (!result) { selected_player_id = UINT32_MAX; auto_target_reset(&auto_target); }
     return result;
 }
 static int __fastcall render_hook(void *menu, void *unused)
@@ -964,6 +975,7 @@ static int __fastcall render_hook(void *menu, void *unused)
 static void *__fastcall destroy_hook(void *menu, void *unused, unsigned char flag)
 {
     (void)unused;
+    auto_target_reset(&auto_target);
     selected_player_id = UINT32_MAX;
     if (settings_open) settings_close();
 #ifdef TRUE_RELATIVE_VISUALS

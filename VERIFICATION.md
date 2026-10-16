@@ -97,3 +97,9 @@ desktop/game-mode controller test matrix have not been recorded for 0.8.0.
 Disable 真实相对 in SokuLauncher plugin settings to turn the plugin off;
 re-enable it to restore it. No on-disk lobby DLL is modified, and the former
 network preflight feature is absent.
+
+## 自动目标切换缓冲
+
+自动模式下，新候选连续最近达到 300 毫秒才切换；当前目标不在附近前三名时立即重新选择。无人、退出大厅、切换显示模式或大厅缩放隐藏评分框时清空缓冲。手动 F8 选择保持原逻辑。
+
+可在 Linux 原生运行：`cc -std=c11 -Wall -Wextra -Werror auto_target_test.c -o /tmp/auto_target_test && /tmp/auto_target_test`。测试覆盖首次选择、延迟边界、反复交错、候选替换、目标离开、无人和计时器回绕。游戏内走动切换效果仍需本地验证。
