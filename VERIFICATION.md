@@ -62,6 +62,13 @@ under its Apache-2.0 option. Sources, licenses and rebuild instructions are in
 Certificate and hostname verification are enabled. Transfers are limited to
 HTTPS, 12 MiB, five redirects and 25 seconds, and serialized for the TLS RNG.
 `TrueRelative-network.log` records transport, HTTP, cache and parse failures.
+Both it and `TrueRelative.log` rotate before a write would exceed 256 KiB.
+Each retains only one `.old` backup, bounding all four files to 1 MiB in total.
+Oversized logs from older builds keep their latest 256 KiB before rotation;
+an oversized pre-existing `.old` is discarded. Concurrent writes are serialized.
+If rotation fails (for example, a locked backup), that entry is skipped rather
+than growing beyond the cap. `LogFileTest.exe` covers limits, repeated rotation,
+legacy oversize, locked backups, and concurrent writers under Wine.
 
 The worker fetches `https://soku.cleista.cc/api/v1/ratings/export.json` and
 refreshes after 10 minutes using `If-None-Match` when an ETag is available.

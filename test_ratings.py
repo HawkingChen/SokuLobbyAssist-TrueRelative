@@ -19,6 +19,7 @@ def windows_path(path):
     return 'Z:' + path.replace('/', '\\')
 
 
+execute('LogFileTest.exe')
 execute('MenuTest.exe',
         windows_path('/run/media/deck/share/fxtz/th123/modules/SokuLobbiesMod/SokuLobbiesMod.dll'),
         windows_path(os.path.join(ROOT, 'test_fixtures', 'SokuLobbiesMod-0.7.5.0.dll')))

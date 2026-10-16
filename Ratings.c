@@ -1,4 +1,5 @@
 #include "Ratings.h"
+#include "LogFile.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -283,16 +284,12 @@ static void network_log(const char *message)
     char *slash = strrchr(path, '\\');
     if (!slash || (size_t)(slash - path) + 25 >= sizeof(path)) return;
     strcpy(slash + 1, "TrueRelative-network.log");
-    HANDLE file = CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                             NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (file == INVALID_HANDLE_VALUE) return;
     SYSTEMTIME now; GetLocalTime(&now);
     char line[1024];
     int size = snprintf(line, sizeof(line), "%04u-%02u-%02u %02u:%02u:%02u %s\r\n",
         now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond, message);
-    DWORD written;
-    if (size > 0 && size < (int)sizeof(line)) WriteFile(file, line, (DWORD)size, &written, NULL);
-    CloseHandle(file);
+    if (size > 0 && size < (int)sizeof(line))
+        log_append_bounded(path, line, (DWORD)size);
 }
 typedef struct { char *data; size_t size; } Download;
 typedef struct { char etag[128]; } ResponseHeaders;

@@ -1,5 +1,6 @@
 #define COBJMACROS
 #include "Ratings.h"
+#include "LogFile.h"
 #include "LobbyPlayer.h"
 #include "AutoTarget.h"
 #ifdef TRUE_RELATIVE_VISUALS
@@ -140,8 +141,10 @@ static bool module_directory(HMODULE module, char out[MAX_PATH])
 
 static void log_line(const char *message)
 {
-    FILE *file = fopen(log_path, "a");
-    if (file) { fprintf(file, "%lu %s\n", (unsigned long)GetTickCount(), message); fclose(file); }
+    char line[1024];
+    int length = snprintf(line, sizeof(line), "%lu %s\r\n", (unsigned long)GetTickCount(), message);
+    if (length > 0 && length < (int)sizeof(line))
+        log_append_bounded(log_path, line, (DWORD)length);
 }
 typedef struct { float x, y, z, rhw; D3DCOLOR color; } Vertex;
 static void rect(IDirect3DDevice9 *device, float x, float y, float w, float h, D3DCOLOR color)

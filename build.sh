@@ -27,6 +27,8 @@ CURL_LIBS="$CURL_ROOT/libcurl.a $CURL_ROOT/libmbedtls.a $CURL_ROOT/libmbedx509.a
   menu_test.c LobbyVisual.c Ratings.c $CURL_FLAGS $CURL_LIBS -luser32 -ld3d9 -ladvapi32 -o build/MenuTest.exe
 "$ZIG" cc -target x86-windows-gnu -O0 -UNDEBUG -Wall -Wextra -Werror \
   rating_test.c $CURL_FLAGS $CURL_LIBS -o build/RatingTest.exe
+"$ZIG" cc -target x86-windows-gnu -O0 -UNDEBUG -Wall -Wextra -Werror \
+  log_file_test.c -o build/LogFileTest.exe
 cp third_party/curl/curl-ca-bundle.crt build/
 # Every archive starts from an empty directory; old staging files are ignored.
 PACKAGE_DIR=$(mktemp -d "$PWD/build/package.XXXXXX")
