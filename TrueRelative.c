@@ -6,6 +6,8 @@
 #include "LobbyVisual.h"
 #endif
 #include <d3d9.h>
+#include <xinput.h>
+#include "PadShortcut.h"
 #include <d3dx9core.h>
 #include <wincrypt.h>
 #include <stdint.h>
@@ -870,12 +872,41 @@ static void settings_close(void)
     settings_open = false;
     if (settings_dirty) save_settings();
 }
-static void settings_input(GameInput input, bool foreground, bool chatting, bool f9_down)
+/* Game action bindings are not physical Start/Back buttons. Steam Input's
+   virtual XInput controller exposes these independently of profile bindings. */
+static bool physical_pad_menu_combo(void)
 {
-    bool pad_combo = foreground && input.pause > 0 && input.select > 0;
-    bool open_trigger = (f9_down && !f9_was_down && !chatting) || (pad_combo && !pad_menu_was_down && !chatting);
+    typedef DWORD (WINAPI *GetStateFn)(DWORD, XINPUT_STATE *);
+    static GetStateFn get_state;
+    static bool initialized;
+    if (!initialized) {
+        initialized = true;
+        const char *libraries[] = {"xinput1_4.dll", "xinput1_3.dll", "xinput9_1_0.dll"};
+        for (unsigned i = 0; i < sizeof(libraries) / sizeof(libraries[0]); ++i) {
+            HMODULE library = LoadLibraryA(libraries[i]);
+            if (!library) continue;
+            get_state = (GetStateFn)(void *)GetProcAddress(library, "XInputGetState");
+            if (get_state) break;
+            FreeLibrary(library);
+        }
+        log_line(get_state ? "controller shortcut: XInput available" :
+                            "controller shortcut: XInput unavailable; game bindings only");
+    }
+    if (!get_state) return false;
+    for (DWORD i = 0; i < XUSER_MAX_COUNT; ++i) {
+        XINPUT_STATE state;
+        if (get_state(i, &state) == ERROR_SUCCESS &&
+            pad_shortcut_buttons(state.Gamepad.wButtons)) return true;
+    }
+    return false;
+}
+static void settings_input(GameInput input, bool foreground, bool chatting, bool f9_down,
+                           bool physical_combo)
+{
+    bool pad_combo = foreground && (physical_combo || (input.pause > 0 && input.select > 0));
+    bool pad_pressed = pad_shortcut_pressed(&pad_menu_was_down, pad_combo, foreground, chatting);
+    bool open_trigger = (f9_down && !f9_was_down && !chatting) || pad_pressed;
     f9_was_down = f9_down;
-    pad_menu_was_down = pad_combo;
     if (open_trigger) {
         if (settings_open) settings_close();
         else { settings_open = true; settings_page = 0; settings_row = 0; settings_last_direction = 0; }
@@ -946,7 +977,8 @@ static int __fastcall process_hook(void *menu, void *unused)
     bool chatting = ((unsigned char *)menu)[0x1154] != 0;
     GameInput saved_input = GAME_INPUT;
     bool was_settings_open = settings_open;
-    settings_input(saved_input, foreground, chatting, f9_down);
+    settings_input(saved_input, foreground, chatting, f9_down,
+        foreground && physical_pad_menu_combo());
     if (f8_down && !f8_was_down && !chatting && !settings_open && display_mode == DISPLAY_MANUAL) {
         VisiblePlayer players[256];
         unsigned order[3];

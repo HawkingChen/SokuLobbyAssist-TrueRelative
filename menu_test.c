@@ -179,13 +179,32 @@ int main(int argc, char **argv)
     settings_page = 0;
     settings_row = 0;
     input.verticalAxis = 1;
-    settings_input(input, true, false, false);
+    settings_input(input, true, false, false, false);
     assert(settings_row == 1);
     input.verticalAxis = 0;
     input.horizontalAxis = 1;
-    settings_input(input, true, false, false);
+    settings_input(input, true, false, false, false);
     assert(!show_own_rating);
     show_own_rating = true;
+    /* Physical Start+Back works even with unbound game pause/select actions. */
+    memset(&input, 0, sizeof(input));
+    settings_open = false;
+    settings_dirty = false;
+    pad_menu_was_down = false;
+    settings_input(input, true, false, false, true);
+    assert(settings_open);
+    settings_input(input, true, false, false, true);
+    assert(settings_open); /* held chord must not toggle every frame */
+    settings_input(input, true, false, false, false);
+    settings_input(input, true, false, false, true);
+    assert(!settings_open);
+    settings_input(input, true, false, false, false);
+    settings_input(input, true, true, false, true);
+    assert(!settings_open); /* never open while chatting */
+    settings_input(input, true, false, false, true);
+    assert(!settings_open); /* release required after blocked chord */
+    settings_input(input, false, false, false, false);
+    assert(!settings_open);
     original_process = assert_muted_input;
     settings_open = true;
     GAME_INPUT.horizontalAxis = 1;

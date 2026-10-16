@@ -103,3 +103,9 @@ network preflight feature is absent.
 自动模式下，新候选连续最近达到 300 毫秒才切换；当前目标不在附近前三名时立即重新选择。无人、退出大厅、切换显示模式或大厅缩放隐藏评分框时清空缓冲。手动 F8 选择保持原逻辑。
 
 可在 Linux 原生运行：`cc -std=c11 -Wall -Wextra -Werror auto_target_test.c -o /tmp/auto_target_test && /tmp/auto_target_test`。测试覆盖首次选择、延迟边界、反复交错、候选替换、目标离开、无人和计时器回绕。游戏内走动切换效果仍需本地验证。
+
+## 手柄 Start+Select 菜单入口修正
+
+原实现只检查游戏映射后的 pause/select 动作，不能据此识别物理 Start/Select。新增动态加载 XInput 并逐台检查 Start+Back（Select）组合，保留游戏动作兼容路径。无 XInput 时仍可用 F9 和原动作映射。聊天框打开及游戏不在前台时不触发；按住仅切换一次，释放后才能再次切换。
+
+Linux 可运行 `cc -std=c11 -Wall -Wextra -Werror pad_shortcut_test.c -o /tmp/pad_shortcut_test && /tmp/pad_shortcut_test`，验证实体按钮掩码、单键不触发、按住去重、释放重按、聊天及前台限制。MenuTest 新增游戏 pause/select 均未绑定时的物理组合开关回归。Steam Deck 的 Steam Input/Proton 实机尚需用户验证；纯 DirectInput 设备若未转换为 XInput，物理读取路径不覆盖。
