@@ -951,7 +951,7 @@ static void draw_settings(IDirect3DDevice9 *device)
     wchar_t title[80];
     swprintf(title, 80, L"真实相对  ·  %ls  (%u/3)", titles[settings_page], settings_page + 1);
     rating_text(x + 18, y + 13, width - 36, title, 0xffd7f3ff);
-    rating_small_text(x + 18, y + 42, width - 36, L"F9 / Start+Select 关闭     换卡键 下一页", 0xffabc3d4);
+    rating_small_text(x + 18, y + 42, width - 36, L"F9 / Start+Select 关闭     S 键 下一页", 0xffabc3d4);
     for (unsigned i = 0; i < settings_rows(); ++i) {
         wchar_t value[32];
         settings_value(value, settings_page, i);
