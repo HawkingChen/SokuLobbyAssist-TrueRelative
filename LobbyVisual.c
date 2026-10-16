@@ -149,10 +149,10 @@ void lobby_visual_draw(IDirect3DDevice9 *device, const void *menu,
             ring(device, x, y, 46 + pulse * 2, 65 + pulse * 2, 3, 0xb06fffe0);
             diamond(device, x, y - 69 - pulse * 2, 4, 0xd4e3fff3);
         } else {
-            float left = x - 45 - pulse;
-            float top = avatar_y - 117 - pulse;
             float width = 96 + pulse * 2;
             float height = 139 + pulse * 2;
+            float left = x - width / 2;
+            float top = y - height / 2;
             box(device, left, top, width, height, 0x28ff304a);
             box(device, left - 2, top - 2, width + 4, 2, 0x58ff6177);
             box(device, left - 2, top + height, width + 4, 2, 0x58ff6177);
