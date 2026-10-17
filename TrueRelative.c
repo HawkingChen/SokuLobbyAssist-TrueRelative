@@ -665,6 +665,20 @@ static bool match_player(const VisiblePlayer players[256], unsigned count, unsig
     char handle[65];
     return ratings_other_claim(players[index].name, handle) && ratings_lookup_handle(handle, match);
 }
+static void queue_visible_claims(const VisiblePlayer players[256], unsigned count, uint32_t local_id)
+{
+    for (unsigned i = 0; i < count; ++i) {
+        if (players[i].id == local_id) continue;
+        unsigned duplicates = 0;
+        for (unsigned j = 0; j < count; ++j)
+            if (same_rating_name(players[i].name, players[j].name)) ++duplicates;
+        if (duplicates != 1) continue;
+        RatingMatch direct;
+        if (ratings_lookup(players[i].name, &direct)) continue;
+        char handle[65];
+        ratings_other_claim(players[i].name, handle);
+    }
+}
 #ifdef TRUE_RELATIVE_VISUALS
 static bool visual_rating(const VisiblePlayer players[256], unsigned count, unsigned index,
                           uint32_t local_id, double *rating)
@@ -698,6 +712,7 @@ static void draw_ratings(IDirect3DDevice9 *device, void *menu)
     int translate_x = *(const int *)(object + 0x198);
     int translate_y = *(const int *)(object + 0x19c);
     uint32_t local_id = local_player_id(object);
+    queue_visible_claims(players, count, local_id);
 #ifdef TRUE_RELATIVE_VISUALS
     lobby_visual_draw(device, menu, players, count, local_id, translate_x, translate_y, visual_rating);
 #endif

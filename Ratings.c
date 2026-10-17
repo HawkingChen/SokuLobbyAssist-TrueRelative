@@ -10,7 +10,10 @@
 #define MAX_JSON (12u * 1024u * 1024u)
 #define MAX_RECORDS 12000u
 #define RATING_CACHE_MS 600000u
-#define CLAIM_CACHE_MS 86400000u
+#define OWN_CLAIM_CACHE_MS 600000u
+#define OTHER_CLAIM_CACHE_MS 3600000u
+#define CLAIM_RETRY_MS 300000u
+#define CLAIM_BATCH_MAX 256u
 
 typedef struct { int start, end, next; char kind; } Token;
 typedef struct {
@@ -42,7 +45,7 @@ static char ratings_etag[128];
 static char claim_cache_path[MAX_PATH];
 static char claim_profile[129], claim_handle[65];
 static FILETIME claim_checked;
-static bool claim_pending;
+static bool claim_pending, claim_in_flight;
 static OtherClaim other_claims[256];
 static unsigned other_claim_count;
 static char other_claim_path[MAX_PATH];
@@ -397,37 +400,63 @@ static char *fetch_url_conditional(const char *url, size_t *length, const char *
     *length = download.size;
     return download.data;
 }
-static char *fetch_url(const char *url, size_t *length)
+static char *fetch_post_json(const char *url, const char *body, size_t *length)
 {
-    return fetch_url_conditional(url, length, NULL, NULL, NULL);
+    *length = 0;
+    InitOnceExecuteOnce(&curl_once, initialize_curl, NULL, NULL);
+    if (curl_init_result != CURLE_OK) {
+        network_log("libcurl initialization failed"); return NULL;
+    }
+    EnterCriticalSection(&download_lock);
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        network_log("libcurl handle allocation failed");
+        LeaveCriticalSection(&download_lock);
+        return NULL;
+    }
+    Download download = {0};
+    struct curl_slist *headers = curl_slist_append(NULL, "Content-Type: application/json");
+    if (!headers) {
+        network_log("libcurl request-header allocation failed");
+        curl_easy_cleanup(curl);
+        LeaveCriticalSection(&download_lock);
+        return NULL;
+    }
+    char error[CURL_ERROR_SIZE] = {0};
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error);
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "https");
+    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 25L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_CAINFO, ca_path);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "TrueRelative/0.8.0");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(body));
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receive_json);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &download);
+    CURLcode result = curl_easy_perform(curl);
+    long status = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+    last_fetch_error = (DWORD)result;
+    char message[640];
+    snprintf(message, sizeof(message), "HTTPS ratings batch: curl=%d HTTP=%ld bytes=%lu %s",
+        (int)result, status, (unsigned long)download.size, result == CURLE_OK ? "OK" :
+        (error[0] ? error : curl_easy_strerror(result)));
+    network_log(message);
+    curl_easy_cleanup(curl);
+    curl_slist_free_all(headers);
+    LeaveCriticalSection(&download_lock);
+    if (result != CURLE_OK || !download.size) { free(download.data); return NULL; }
+    *length = download.size;
+    return download.data;
 }
 static char *fetch_curl(size_t *length, bool *not_modified, char response_etag[128])
 {
     return fetch_url_conditional("https://soku.cleista.cc/api/v1/ratings/export.json", length,
         ratings_etag, response_etag, not_modified);
-}
-static bool parse_claim(const char *json, size_t length, const char *profile, char handle[65])
-{
-    Token *tokens = NULL;
-    int count = 0;
-    handle[0] = 0;
-    if (!parse_tokens(json, length, &tokens, &count) || tokens[0].kind != '{') {
-        free(tokens); return false;
-    }
-    int entry = property(json, tokens, 0, profile);
-    bool valid = entry >= 0;
-    if (valid && tokens[entry].kind == '{') {
-        string_property(handle, 65, json, tokens, entry, "handle");
-        size_t n = strlen(handle);
-        if (n < 2 || n > 24) valid = false;
-        for (size_t i = 0; valid && i < n; ++i)
-            if (!((handle[i] >= 'a' && handle[i] <= 'z') ||
-                  (handle[i] >= 'A' && handle[i] <= 'Z') ||
-                  (handle[i] >= '0' && handle[i] <= '9') || handle[i] == '_')) valid = false;
-    } else if (valid && tokens[entry].kind != 'n') valid = false;
-    if (!valid) handle[0] = 0;
-    free(tokens);
-    return valid;
 }
 static void load_claim_cache(void)
 {
@@ -443,7 +472,7 @@ static void load_claim_cache(void)
             FILETIME now; GetSystemTimeAsFileTime(&now);
             uint64_t age = filetime_number(now) - (uint64_t)stamp;
             if (strlen(line) < sizeof(claim_profile) && strlen(first) < sizeof(claim_handle) &&
-                stamp && age < (uint64_t)CLAIM_CACHE_MS * 10000) {
+                stamp && age < (uint64_t)OWN_CLAIM_CACHE_MS * 10000) {
                 strcpy(claim_profile, line);
                 strcpy(claim_handle, first);
                 claim_checked.dwLowDateTime = (DWORD)stamp;
@@ -465,48 +494,14 @@ static void save_claim_cache(const char *profile, const char *handle, FILETIME c
     if (!ok || !MoveFileExA(temporary, claim_cache_path,
                             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) DeleteFileA(temporary);
 }
-static bool claim_url(const char *profile, char url[512])
+static DWORD WINAPI other_claim_worker(void *unused);
+static void start_claim_worker_locked(void)
 {
-    strcpy(url, "https://soku.cleista.cc/api/names/profiles?name=");
-    static const char hex[] = "0123456789ABCDEF";
-    size_t offset = strlen(url);
-    for (const unsigned char *p = (const unsigned char *)profile; *p; ++p) {
-        unsigned char c = *p;
-        if (offset + 4 >= 512) return false;
-        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-            (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.' || c == '~') url[offset++] = c;
-        else { url[offset++] = '%'; url[offset++] = hex[c >> 4]; url[offset++] = hex[c & 15]; }
-    }
-    url[offset] = 0;
-    return true;
-}
-static DWORD WINAPI claim_worker(void *argument)
-{
-    char *profile = argument;
-    char url[512];
-    char handle[65] = {0};
-    bool valid = false;
-    if (claim_url(profile, url)) {
-        size_t length = 0;
-        char *json = fetch_url(url, &length);
-        if (json) { valid = parse_claim(json, length, profile, handle); free(json); }
-    }
-    FILETIME now; GetSystemTimeAsFileTime(&now);
-    EnterCriticalSection(&ratings_lock);
-    if (!strcmp(claim_profile, profile)) {
-        strcpy(claim_handle, handle);
-        claim_checked = now;
-        if (!valid) {
-            uint64_t retry = filetime_number(now) - (uint64_t)(CLAIM_CACHE_MS - 300000u) * 10000;
-            claim_checked.dwLowDateTime = (DWORD)retry;
-            claim_checked.dwHighDateTime = (DWORD)(retry >> 32);
-        }
-        claim_pending = false;
-    }
-    LeaveCriticalSection(&ratings_lock);
-    if (valid) save_claim_cache(profile, handle, now);
-    free(profile);
-    return 0;
+    if (other_worker_running) return;
+    other_worker_running = true;
+    HANDLE thread = CreateThread(NULL, 0, other_claim_worker, NULL, 0, NULL);
+    if (thread) CloseHandle(thread);
+    else other_worker_running = false;
 }
 bool ratings_own_claim(const char *profile_utf8, char handle[65])
 {
@@ -522,16 +517,10 @@ bool ratings_own_claim(const char *profile_utf8, char handle[65])
     }
     FILETIME now; GetSystemTimeAsFileTime(&now);
     uint64_t age = filetime_number(now) - filetime_number(claim_checked);
-    if (!claim_pending && age >= (uint64_t)CLAIM_CACHE_MS * 10000) {
-        char *copy = malloc(strlen(claim_profile) + 1);
-        if (copy) {
-            strcpy(copy, claim_profile);
-            claim_pending = true;
-            HANDLE thread = CreateThread(NULL, 0, claim_worker, copy, 0, NULL);
-            if (thread) CloseHandle(thread);
-            else { claim_pending = false; free(copy); }
-        }
+    if (!claim_pending && age >= (uint64_t)OWN_CLAIM_CACHE_MS * 10000) {
+        claim_pending = true;
     }
+    if (claim_pending) start_claim_worker_locked();
     bool found = !strcmp(claim_profile, profile_utf8) && claim_handle[0];
     if (found) strcpy(handle, claim_handle);
     LeaveCriticalSection(&ratings_lock);
@@ -551,7 +540,8 @@ static void load_other_claims(void)
         unsigned long long stamp = strtoull(second, NULL, 10);
         if (!line[0] || strpbrk(line, "\r\n") || strlen(line) >= sizeof(other_claims[0].profile) ||
             strlen(first) >= sizeof(other_claims[0].handle) || !stamp ||
-            filetime_number(now) - (uint64_t)stamp >= (uint64_t)CLAIM_CACHE_MS * 10000) continue;
+            filetime_number(now) - (uint64_t)stamp >=
+                (uint64_t)OTHER_CLAIM_CACHE_MS * 10000) continue;
         OtherClaim *entry = &other_claims[other_claim_count++];
         strcpy(entry->profile, line);
         strcpy(entry->handle, first);
@@ -586,46 +576,158 @@ static void save_other_claims(void)
                             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) DeleteFileA(temporary);
     free(copy);
 }
+static bool append_json_string(char *json, size_t capacity, size_t *length, const char *value)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    if (*length + 1 >= capacity) return false;
+    json[(*length)++] = '"';
+    for (const unsigned char *p = (const unsigned char *)value; *p; ++p) {
+        unsigned char c = *p;
+        if (c == '"' || c == '\\') {
+            if (*length + 2 >= capacity) return false;
+            json[(*length)++] = '\\'; json[(*length)++] = (char)c;
+        } else if (c < 0x20) {
+            if (*length + 6 >= capacity) return false;
+            memcpy(json + *length, "\\u00", 4); *length += 4;
+            json[(*length)++] = hex[c >> 4]; json[(*length)++] = hex[c & 15];
+        } else {
+            if (*length + 1 >= capacity) return false;
+            json[(*length)++] = (char)c;
+        }
+    }
+    if (*length + 1 >= capacity) return false;
+    json[(*length)++] = '"'; json[*length] = 0;
+    return true;
+}
+static bool make_claim_batch_body(char profiles[CLAIM_BATCH_MAX][129], unsigned count,
+                                  char body[65536])
+{
+    size_t length = 0;
+    memcpy(body, "{\"names\":[", 10); length = 10;
+    for (unsigned i = 0; i < count; ++i) {
+        if (i) body[length++] = ',';
+        if (!append_json_string(body, 65536, &length, profiles[i])) return false;
+    }
+    if (length + 3 >= 65536) return false;
+    memcpy(body + length, "]}", 3);
+    return true;
+}
+static bool parse_claim_batch(const char *json, size_t length,
+                              char profiles[CLAIM_BATCH_MAX][129], unsigned count,
+                              char handles[CLAIM_BATCH_MAX][65], bool confirmed[CLAIM_BATCH_MAX])
+{
+    Token *tokens = NULL;
+    int token_count = 0;
+    if (!parse_tokens(json, length, &tokens, &token_count) || tokens[0].kind != '{') {
+        free(tokens); return false;
+    }
+    int players = property(json, tokens, 0, "players");
+    int not_found = property(json, tokens, 0, "notFound");
+    if (players < 0 || tokens[players].kind != '[' ||
+        (not_found >= 0 && tokens[not_found].kind != '[')) {
+        free(tokens); return false;
+    }
+    memset(handles, 0, CLAIM_BATCH_MAX * 65);
+    memset(confirmed, 0, CLAIM_BATCH_MAX * sizeof(*confirmed));
+    for (int i = players + 1; i < tokens[players].next; i = tokens[i].next) {
+        if (tokens[i].kind != '{') { free(tokens); return false; }
+        char query[129] = {0}, handle[65] = {0};
+        string_property(query, sizeof(query), json, tokens, i, "query");
+        string_property(handle, sizeof(handle), json, tokens, i, "handle");
+        for (unsigned j = 0; query[0] && j < count; ++j)
+            if (!strcmp(query, profiles[j])) {
+                strcpy(handles[j], handle); confirmed[j] = true; break;
+            }
+    }
+    if (not_found >= 0) for (int i = not_found + 1; i < tokens[not_found].next; i = tokens[i].next) {
+        char query[129] = {0};
+        if (!valid_utf8_string(query, sizeof(query), json, &tokens[i])) continue;
+        for (unsigned j = 0; j < count; ++j)
+            if (!strcmp(query, profiles[j])) { confirmed[j] = true; break; }
+    }
+    free(tokens);
+    return true;
+}
 static DWORD WINAPI other_claim_worker(void *unused)
 {
     (void)unused;
+    /* Calls from one render pass arrive consecutively. Let them form one request. */
+    Sleep(20);
     for (;;) {
-        char profile[129] = {0};
-        unsigned index = 0;
+        char profiles[CLAIM_BATCH_MAX][129] = {{0}};
+        char handles[CLAIM_BATCH_MAX][65] = {{0}};
+        bool confirmed[CLAIM_BATCH_MAX] = {0};
+        unsigned indices[CLAIM_BATCH_MAX] = {0};
+        bool own[CLAIM_BATCH_MAX] = {0};
+        unsigned count = 0;
         EnterCriticalSection(&ratings_lock);
-        for (; index < other_claim_count; ++index)
-            if (other_claims[index].pending && !other_claims[index].in_flight) break;
-        if (index == other_claim_count) {
+        if (claim_pending && !claim_in_flight) {
+            own[count] = true;
+            strcpy(profiles[count], claim_profile);
+            claim_in_flight = true;
+            ++count;
+        }
+        for (unsigned index = 0; index < other_claim_count && count < CLAIM_BATCH_MAX; ++index) {
+            if (!other_claims[index].pending || other_claims[index].in_flight) continue;
+            indices[count] = index;
+            strcpy(profiles[count], other_claims[index].profile);
+            other_claims[index].pending = false;
+            other_claims[index].in_flight = true;
+            ++count;
+        }
+        if (!count) {
             other_worker_running = false;
             LeaveCriticalSection(&ratings_lock);
             return 0;
         }
-        OtherClaim *entry = &other_claims[index];
-        strcpy(profile, entry->profile);
-        entry->pending = false;
-        entry->in_flight = true;
         LeaveCriticalSection(&ratings_lock);
-        char url[512], handle[65] = {0};
-        bool valid = false;
-        if (claim_url(profile, url)) {
+
+        char body[65536];
+        bool valid = make_claim_batch_body(profiles, count, body);
+        if (valid) {
             size_t length = 0;
-            char *json = fetch_url(url, &length);
-            if (json) { valid = parse_claim(json, length, profile, handle); free(json); }
+            char *json = fetch_post_json("https://soku.cleista.cc/api/v1/ratings/players",
+                                         body, &length);
+            valid = json && parse_claim_batch(json, length, profiles, count, handles, confirmed);
+            free(json);
         }
         FILETIME now; GetSystemTimeAsFileTime(&now);
+        bool save_own = false;
         EnterCriticalSection(&ratings_lock);
-        entry = &other_claims[index];
-        if (valid) {
-            strcpy(entry->handle, handle);
-            entry->checked = now;
-            entry->valid = true;
-        } else {
-            uint64_t retry = filetime_number(now) - (uint64_t)(CLAIM_CACHE_MS - 300000u) * 10000;
-            entry->checked.dwLowDateTime = (DWORD)retry;
-            entry->checked.dwHighDateTime = (DWORD)(retry >> 32);
+        for (unsigned i = 0; i < count; ++i) {
+            if (own[i]) {
+                if (!strcmp(claim_profile, profiles[i])) {
+                    if (valid && confirmed[i]) {
+                        strcpy(claim_handle, handles[i]);
+                        claim_checked = now;
+                        save_own = true;
+                    } else {
+                        uint64_t retry = filetime_number(now) -
+                            (uint64_t)(OWN_CLAIM_CACHE_MS - CLAIM_RETRY_MS) * 10000;
+                        claim_checked.dwLowDateTime = (DWORD)retry;
+                        claim_checked.dwHighDateTime = (DWORD)(retry >> 32);
+                    }
+                    claim_pending = false;
+                    claim_in_flight = false;
+                }
+                continue;
+            }
+            OtherClaim *entry = &other_claims[indices[i]];
+            if (strcmp(entry->profile, profiles[i])) continue;
+            if (valid && confirmed[i]) {
+                strcpy(entry->handle, handles[i]);
+                entry->checked = now;
+                entry->valid = true;
+            } else {
+                uint64_t retry = filetime_number(now) -
+                    (uint64_t)(OTHER_CLAIM_CACHE_MS - CLAIM_RETRY_MS) * 10000;
+                entry->checked.dwLowDateTime = (DWORD)retry;
+                entry->checked.dwHighDateTime = (DWORD)(retry >> 32);
+            }
+            entry->in_flight = false;
         }
-        entry->in_flight = false;
         LeaveCriticalSection(&ratings_lock);
+        if (save_own) save_claim_cache(profiles[0], handles[0], now);
         if (valid) save_other_claims();
         Sleep(500);
     }
@@ -665,14 +767,9 @@ bool ratings_other_claim(const char *profile_utf8, char handle[65])
         OtherClaim *entry = &other_claims[index];
         FILETIME now; GetSystemTimeAsFileTime(&now);
         uint64_t age = filetime_number(now) - filetime_number(entry->checked);
-        if (age >= (uint64_t)CLAIM_CACHE_MS * 10000 && !entry->in_flight) entry->pending = true;
+        if (age >= (uint64_t)OTHER_CLAIM_CACHE_MS * 10000 && !entry->in_flight) entry->pending = true;
         if (entry->valid && entry->handle[0]) { strcpy(handle, entry->handle); found = true; }
-        if (entry->pending && !other_worker_running) {
-            other_worker_running = true;
-            HANDLE thread = CreateThread(NULL, 0, other_claim_worker, NULL, 0, NULL);
-            if (thread) CloseHandle(thread);
-            else other_worker_running = false;
-        }
+        if (entry->pending) start_claim_worker_locked();
     }
     LeaveCriticalSection(&ratings_lock);
     return found;

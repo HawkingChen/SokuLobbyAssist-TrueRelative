@@ -104,12 +104,20 @@ int main(int argc, char **argv)
     started = 1;
     Record *rows = NULL; unsigned count = 0;
     assert(parse_ratings(fixture, strlen(fixture), &rows, &count) && count == 5);
+    char claim_profiles[CLAIM_BATCH_MAX][129] = {{0}};
+    char claim_handles[CLAIM_BATCH_MAX][65] = {{0}};
     char claim[65];
-    const char claim_fixture[] = "{\"profile A\":{\"handle\":\"handle_a\",\"displayName\":\"Public A\",\"verified\":false}}";
-    assert(parse_claim(claim_fixture, strlen(claim_fixture), "profile A", claim) &&
-        !strcmp(claim, "handle_a"));
-    const char no_claim[] = "{\"profile A\":null}";
-    assert(parse_claim(no_claim, strlen(no_claim), "profile A", claim) && !claim[0]);
+    bool claim_confirmed[CLAIM_BATCH_MAX] = {0};
+    strcpy(claim_profiles[0], "profile A");
+    const char claim_fixture[] =
+        "{\"players\":[{\"query\":\"profile A\",\"handle\":\"handle_a\"}],\"notFound\":[]}";
+    assert(parse_claim_batch(claim_fixture, strlen(claim_fixture), claim_profiles, 1,
+                             claim_handles, claim_confirmed) && claim_confirmed[0] &&
+           !strcmp(claim_handles[0], "handle_a"));
+    const char no_claim[] = "{\"players\":[],\"notFound\":[\"profile A\"]}";
+    assert(parse_claim_batch(no_claim, strlen(no_claim), claim_profiles, 1,
+                             claim_handles, claim_confirmed) && claim_confirmed[0] &&
+           !claim_handles[0][0]);
     FILETIME now; GetSystemTimeAsFileTime(&now);
     publish(rows, count, now);
     strcpy(other_claims[0].profile, "claimed alias");
