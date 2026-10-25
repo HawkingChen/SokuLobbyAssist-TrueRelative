@@ -271,15 +271,21 @@ static void refresh_cache_timestamp(FILETIME now)
     SetFileTime(file, NULL, NULL, &now);
     CloseHandle(file);
 }
-// Serialize transfers because the bundled TLS build has shared RNG state.
+// Keep background transfers serialized across rating and claimed-name workers.
 static CRITICAL_SECTION download_lock;
 static INIT_ONCE curl_once = INIT_ONCE_STATIC_INIT;
 static CURLcode curl_init_result = CURLE_FAILED_INIT;
+static void network_log(const char *message);
 static BOOL CALLBACK initialize_curl(PINIT_ONCE once, PVOID parameter, PVOID *context)
 {
     (void)once; (void)parameter; (void)context;
     InitializeCriticalSection(&download_lock);
     curl_init_result = curl_global_init(CURL_GLOBAL_DEFAULT);
+    const curl_version_info_data *info = curl_version_info(CURLVERSION_NOW);
+    if (curl_init_result == CURLE_OK && (!info || !info->ssl_version || !strstr(info->ssl_version, "Schannel")))
+        curl_init_result = CURLE_FAILED_INIT;
+    network_log(curl_init_result == CURLE_OK ? "HTTPS backend=Schannel; trust=Windows system certificates" :
+        "HTTPS initialization failed: Schannel backend required");
     return TRUE;
 }
 static void network_log(const char *message)
@@ -371,8 +377,10 @@ static char *fetch_url_conditional(const char *url, size_t *length, const char *
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 25L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl, CURLOPT_CAINFO, ca_path);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "TrueRelative/0.8.0");
+    curl_easy_setopt(curl, CURLOPT_CAINFO, NULL);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "TrueRelative/0.8.1-pre.1");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receive_json);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &download);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, receive_headers);
@@ -430,8 +438,10 @@ static char *fetch_post_json(const char *url, const char *body, size_t *length)
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 25L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl, CURLOPT_CAINFO, ca_path);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "TrueRelative/0.8.0");
+    curl_easy_setopt(curl, CURLOPT_CAINFO, NULL);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "TrueRelative/0.8.1-pre.1");
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(body));

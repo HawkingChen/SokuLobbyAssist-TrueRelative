@@ -1,26 +1,17 @@
-# 0.8.0
+# 0.8.1-pre.1
 
-<a href="https://raw.githubusercontent.com/HawkingChen/SokuLobbyAssist-TrueRelative/main/docs/screenshots/menu.png"><img src="https://raw.githubusercontent.com/HawkingChen/SokuLobbyAssist-TrueRelative/main/docs/screenshots/menu.png" alt="大厅设置菜单与玩家标记" width="640"></a>
+### 修复与测试
+- 评分请求改用 Schannel，主要测试改善部分情况下评分无法加载的问题。
+- 由于网络问题无法访问数据源的情况，本版本无法解决。
 
-### 新功能
-- 新增 GUI 设置菜单，按 F9 打开。
-- 增加了新人保护光环和触手危险标识，可在菜单中设置。
-- 可以自定义相对等级的分数线。
+本插件会接管大厅集成的等级分模块，改用独立插件显示。
 
-### 优化
-- 根据大家的意见调整了相对等级分数线，让等级更贴近实际。
-- 评分缓存缩短至 10 分钟，提高数据的实时性。
+**建议多数用户等待大厅更新。若使用大厅集成的等级分模块，请在插件列表中禁用本插件。**
 
-### 快捷键
+支持简体中文联机大厅 0.7.5.2、0.7.5.4、0.7.6.4B。
 
-- F8：在菜单选“手动(F8)”后切换附近玩家。
-- F9：打开设置菜单。
-- F10：切换等级分自动显示／关闭。
+安装：可通过 SokuLauncher“设置 - 插件 - 安装”安装，也可以解压到游戏的 `modules` 目录。安装完成后，在插件设置里启用“真实相对”。正式版与本地测试版请只启用一个。
 
-支持简体中文联机大厅 0.7.5.2、0.7.5.4。
+快捷键说明请参考仓库主页 README。
 
-安装：可通过 SokuLauncher“设置 - 插件 - 安装”安装，也可以解压到游戏的 `modules` 目录。安装完成后，在插件设置里启用“真实相对”。
-
-菜单操作说明请参考仓库主页 README。
-
-- [TrueRelative-0.8.0-install.zip：插件安装包](https://github.com/HawkingChen/SokuLobbyAssist-TrueRelative/releases/download/v0.8.0/TrueRelative-0.8.0-install.zip)
+- [TrueRelative-0.8.1-pre.1-install.zip：插件安装包](https://github.com/HawkingChen/SokuLobbyAssist-TrueRelative/releases/download/v0.8.1-pre.1/TrueRelative-0.8.1-pre.1-install.zip)

@@ -4,12 +4,16 @@ import subprocess
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WINE = '/home/deck/.local/share/Steam/compatibilitytools.d/GE-Proton10-12/files/bin/wine'
+RUNTIME = '/home/deck/.local/share/Steam/steamapps/common/SteamLinuxRuntime_sniper/run'
 ENV = dict(os.environ, WINEDEBUG='-all',
            WINEPREFIX='/home/deck/.local/share/Steam/steamapps/compatdata/4198759020/pfx')
 
 
 def execute(name, *args):
-    result = subprocess.run([WINE, os.path.join(ROOT, 'build', name), *args],
+    command = [WINE, os.path.join(ROOT, 'build', name), *args]
+    if os.path.isfile(RUNTIME):
+        command = [RUNTIME, '--', *command]
+    result = subprocess.run(command,
                             env=ENV, capture_output=True, text=True, timeout=45)
     assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
     print(result.stdout.strip(), flush=True)
@@ -25,7 +29,8 @@ execute('MenuTest.exe',
         windows_path(os.path.join(ROOT, 'test_fixtures', 'SokuLobbiesMod-0.7.5.0.dll')))
 execute('RatingTest.exe')
 execute('RatingTest.exe', '--fetch')
-execute('RatingTest.exe', '--bad-ca')
+execute('RatingTest.exe', '--system-ca')
+execute('RatingTest.exe', '--post')
 execute('RatingTest.exe', '--claim')
 if os.path.exists('/tmp/soku-rating.json'):
     execute('RatingTest.exe', windows_path('/tmp/soku-rating.json'))

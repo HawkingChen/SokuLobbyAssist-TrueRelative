@@ -1,20 +1,15 @@
-# Static HTTPS dependencies
+# Static HTTPS dependency
 
-- curl 8.23.0: https://curl.se/download/curl-8.23.0.tar.xz (curl license, COPYING.txt).
-- Mbed TLS 3.6.7 LTS: https://github.com/Mbed-TLS/mbedtls/releases/tag/mbedtls-3.6.7
-  (used under Apache-2.0; full license in MBEDTLS-LICENSE.txt).
+- curl 8.23.0 (curl license, COPYING.txt).
+- Windows TLS backend: Schannel, using the Windows/Wine system certificate store.
+- Certificate and hostname verification remain enabled. No curl.exe or CA bundle is needed.
+- libcurl.a targets x86-windows-gnu and is built with Zig 0.14.1. Mbed TLS is not linked.
 
-The .a files target x86-windows-gnu and were built with Zig 0.14.1.
-They are statically linked into TrueRelative.dll; no curl.exe or libcurl DLL is needed.
-TLS uses Mbed TLS and the bundled CA file, independent of Windows/Wine Schannel.
-Source archive checksums are recorded in SHA256SUMS.
+Rebuild locally with `python3 third_party/libcurl/rebuild.py`, then `sh build.sh`.
+CMAKE, NINJA and ZIG can point to installed tools. Archives are vendored and
+checked against SHA256SUMS; no network download is needed. The older Mbed TLS
+archive and libraries may still be present as retained build inputs but are unused.
 
-To rebuild on Linux, install CMake, Ninja and Zig 0.14.1, then run:
-
-```sh
-python3 third_party/libcurl/rebuild.py
-sh build.sh
-```
-
-ZIG, CMAKE and NINJA can specify the executable paths. The dependency rebuild
-uses only the included archives and performs no network downloads.
+Proton networking tests must run inside Steam Linux Runtime, which supplies
+the GnuTLS libraries used by Wine Schannel. Directly invoking Wine from a bare
+host shell can report SEC_E_SECPKG_NOT_FOUND even if the game runtime works.

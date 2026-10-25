@@ -54,23 +54,14 @@ def build(source, destination, options):
     subprocess.run([cmake, '--build', str(destination), '--parallel', '4'], check=True)
 
 
-tls_build = BUILD / 'mbedtls-build'
-tls_install = BUILD / 'mbedtls-install'
-build(BUILD / 'mbedtls-3.6.7', tls_build,
-      ['-DENABLE_PROGRAMS=OFF', '-DENABLE_TESTING=OFF',
-       f'-DCMAKE_INSTALL_PREFIX={tls_install}'])
-subprocess.run([cmake, '--install', str(tls_build)], check=True)
 curl_build = BUILD / 'curl-build'
 build(BUILD / 'curl-8.23.0', curl_build, [
     '-DBUILD_SHARED_LIBS=OFF', '-DBUILD_STATIC_LIBS=ON', '-DBUILD_CURL_EXE=OFF',
     '-DBUILD_TESTING=OFF', '-DBUILD_EXAMPLES=OFF', '-DBUILD_LIBCURL_DOCS=OFF',
-    '-DBUILD_MISC_DOCS=OFF', '-DCURL_USE_SCHANNEL=OFF', '-DCURL_USE_OPENSSL=OFF',
-    '-DCURL_USE_MBEDTLS=ON', '-DCURL_USE_LIBPSL=OFF', '-DCURL_USE_LIBSSH2=OFF',
+    '-DBUILD_MISC_DOCS=OFF', '-DCURL_USE_SCHANNEL=ON', '-DCURL_USE_OPENSSL=OFF',
+    '-DCURL_USE_MBEDTLS=OFF', '-DCURL_USE_LIBPSL=OFF', '-DCURL_USE_LIBSSH2=OFF',
     '-DCURL_ZLIB=OFF', '-DCURL_BROTLI=OFF', '-DCURL_ZSTD=OFF', '-DUSE_NGHTTP2=OFF',
-    f'-DCMAKE_PREFIX_PATH={tls_install}',
 ])
 shutil.copy2(curl_build / 'lib/libcurl.a', HERE)
-for library in ['libmbedtls.a', 'libmbedx509.a', 'libmbedcrypto.a']:
-    shutil.copy2(tls_build / 'library' / library, HERE)
 shutil.copytree(BUILD / 'curl-8.23.0/include/curl', HERE / 'include/curl', dirs_exist_ok=True)
 print('Static libraries rebuilt. Run sh build.sh from the project root.')

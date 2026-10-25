@@ -78,11 +78,22 @@ int main(int argc, char **argv)
         assert(current && older);
         assert(supported_lobby(current));
         lobby_module = current;
-        void **current_vtable = (void **)((unsigned char *)current + LOBBY_MENU_VTABLE_RVA);
+        void **current_vtable = (void **)((unsigned char *)current + lobby_layout->vtable);
         if (!verified_menu_vtable(current_vtable))
             fprintf(stderr, "vtable at %p: %p %p %p %p (base %p)\n", (void *)current_vtable,
                 current_vtable[0], current_vtable[1], current_vtable[2], current_vtable[3], (void *)current);
         assert(verified_menu_vtable(current_vtable));
+        void *saved_method = current_vtable[2];
+        assert(replace_pointer(&current_vtable[2], (void *)((uintptr_t)saved_method + 1)));
+        assert(!verified_menu_vtable(current_vtable));
+        assert(replace_pointer(&current_vtable[2], saved_method));
+        assert(verified_menu_vtable(current_vtable));
+        if (lobby_layout->native_ratings) {
+            BYTE *native = (BYTE *)current + lobby_layout->native_ratings;
+            *native = 1;
+            suppress_native_ratings();
+            assert(!*native);
+        }
         assert(!supported_lobby(older));
         lobby_module = NULL;
         FreeLibrary(current); FreeLibrary(older);
@@ -90,14 +101,14 @@ int main(int argc, char **argv)
     }
     unsigned char lobby_data[0x2000] = {0};
     unsigned char player_data[4 * 0x64] = {0};
-    *(unsigned char **)(lobby_data + 0x220) = player_data;
-    *(unsigned char **)(lobby_data + 0x224) = player_data + sizeof(player_data);
-    *(uint32_t *)(lobby_data + 0x204) = 100;
-    *(uint32_t *)(lobby_data + 0x208) = 200;
-    unsigned char connection[0x13c] = {0};
+    *(unsigned char **)(lobby_data + lobby_layout->players) = player_data;
+    *(unsigned char **)(lobby_data + lobby_layout->players + 4) = player_data + sizeof(player_data);
+    *(uint32_t *)(lobby_data + lobby_layout->camera) = 100;
+    *(uint32_t *)(lobby_data + lobby_layout->camera + 4) = 200;
+    unsigned char connection[0x600] = {0};
     uint32_t me_id = 7;
-    *(unsigned char **)(lobby_data + 0x210) = connection;
-    *(uint32_t **)(connection + 0x138) = &me_id;
+    *(unsigned char **)(lobby_data + lobby_layout->connection) = connection;
+    *(uint32_t **)(connection + lobby_layout->me) = &me_id;
     for (unsigned i = 0; i < 3; ++i) {
         unsigned char *p = player_data + i * 0x64;
         *(uint32_t *)p = 7 + i;
@@ -123,7 +134,7 @@ int main(int argc, char **argv)
     unsigned order[3] = {0};
     assert(nearby_players(lobby_data, copied, 3, order) == 2);
     assert(order[0] == 1 && order[1] == 2);
-    *(uint32_t *)(lobby_data + 0x204) = 70; /* camera differs; nearest uses avatar */
+    *(uint32_t *)(lobby_data + lobby_layout->camera) = 70; /* camera differs; nearest uses avatar */
     assert(nearby_players(lobby_data, copied, 3, order) == 2);
     assert(order[0] == 1 && order[1] == 2);
     selected_player_id = UINT32_MAX;
@@ -174,6 +185,20 @@ int main(int argc, char **argv)
     assert(strstr(saved_text, "position=center"));
     assert(strstr(saved_text, "[Display]\r\nmode=manual"));
     DeleteFileA(save_file);
+    assert(!lobby_modal_open(lobby_data));
+    lobby_data[lobby_layout->chatting] = 1;
+    assert(lobby_modal_open(lobby_data));
+    lobby_data[lobby_layout->chatting] = 0;
+    if (lobby_layout->emotes) {
+        lobby_data[lobby_layout->emotes] = 1;
+        assert(lobby_modal_open(lobby_data));
+        lobby_data[lobby_layout->emotes] = 0;
+    }
+    if (lobby_layout->quick_messages) {
+        lobby_data[lobby_layout->quick_messages] = 1;
+        assert(lobby_modal_open(lobby_data));
+        lobby_data[lobby_layout->quick_messages] = 0;
+    }
     GameInput input = {0};
     settings_open = true;
     settings_page = 0;

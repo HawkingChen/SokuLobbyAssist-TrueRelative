@@ -1,6 +1,6 @@
 # TrueRelative verification notes
 
-## Current version: 0.8.0
+## Current development version: 0.8.1-pre.1
 
 F9 or Start+Select opens the lobby settings menu. F8 selects nearby players
 in manual mode; F10 switches automatic display on/off independently of the
@@ -22,12 +22,13 @@ F7 has no assigned action in this version.
 Run `sh build.sh` with Python 3, zip, and Zig 0.14.1 available. The script uses
 `ZIG` if set, otherwise Zig from PATH or `zig-x86_64-linux-0.14.1/zig`.
 It reads the version from `mod.json` and creates
-`build/TrueRelative-<version>-install.zip` (currently 0.8.0).
+`build/TrueRelative-<version>-install.zip` (currently 0.8.1-pre.1).
 Each package uses a new temporary directory and an explicit file list, so
 files left in previous staging directories cannot enter the archive. A complete
 ZIP replaces the local output only after packaging succeeds.
 The archive has a single `SokuLobbyAssist/` top-level directory and includes
-MIT `LICENSE`, curl `COPYING.txt`, and `MBEDTLS-LICENSE.txt`.
+MIT `LICENSE` and curl `COPYING.txt`. Schannel development builds omit the
+old bundled CA file and Mbed TLS license because Mbed TLS is no longer linked.
 The MIT file was added after the published v0.8.0 tag; the existing published
 0.8.0 installer has not been replaced with this newly packaged archive.
 
@@ -39,9 +40,10 @@ The plugin accepts these verified Chinese lobby binaries:
 | --- | --- |
 | 0.7.5.2 | `dbce5a6a59e94e2d4c43bcfbd69fce35ad9804a4dd20e76aa28417a3c6ab28cd` |
 | 0.7.5.4 | `526d8437c00a85cdbeb5388ea8bfc18229cb649278f079e000e2799d5de50c87` |
+| 0.7.6.4B (development, game regression pending) | `91439763743a011d011d773285e2c14658fe8bb5bc9b29b08e8c1e61c42198c7` |
 
 Each supported binary has a checked vtable entry set; other binaries are
-rejected. `InLobbyMenu` has its vtable at RVA `0x2129a4`. The four entries are
+rejected. In the older two builds, `InLobbyMenu` has its vtable at RVA `0x2129a4`. The four entries are
 `0x104f60`, `0x1059b0`, `0x119d80`, `0x11bbe0` in 0.7.5.2 and
 `0x104f60`, `0x1059b0`, `0x119dc0`, `0x11bc20` in 0.7.5.4.
 
@@ -54,13 +56,30 @@ The supplied 0.8.0 screenshots show the menu, rating cards, green halo and
 red danger marker in the lobby; redacted examples are in `docs/screenshots/`.
 These observations do not replace tests of every avatar size or controller mode.
 
+For 0.7.6.4B, the RTTI-verified `InLobbyMenu` vtable is at RVA `0x23c64c`,
+with methods `0x115910/0x1159c0/0x130630/0x1324b0`. Disassembly confirms the
+100-byte player records are unchanged; the player vector moved to `+0x26c`,
+connection to `+0x238`, local-player pointer to connection `+0x438`, camera
+coordinates to `+0x22c/+0x230`, zoom to `+0x234`, and translation to
+`+0x1c0/+0x1c4`. Chat/emote/quick-message modal flags are `+0x1334/+0x1454/+0x1468`.
+The native `RelativeRatingsEnabled` byte is at module RVA `0x29998d`; it is
+cleared in memory at plugin initialization and before lobby processing/rendering.
+The native on-disk configuration is retained so disabling TrueRelative and
+restarting restores the native rating UI. No lobby DLL file, connection protocol,
+or packet construction code is changed.
+
 ## Ratings and HTTPS
 
-HTTPS runs inside the 32-bit DLL using static libcurl 8.23.0 and Mbed TLS 3.6.7
-under its Apache-2.0 option. Sources, licenses and rebuild instructions are in
-`third_party/libcurl/`. Keep `curl-ca-bundle.crt` beside the plugin.
-Certificate and hostname verification are enabled. Transfers are limited to
-HTTPS, 12 MiB, five redirects and 25 seconds, and serialized for the TLS RNG.
+The current development build uses static libcurl 8.23.0 with Schannel only,
+using the Windows/Wine system certificate store. No bundled CA file or external
+curl.exe is required. Certificate and hostname verification remain enabled.
+Transfers are limited to HTTPS, 12 MiB, five redirects and 25 seconds, and serialized
+across background workers. Rebuild instructions are in `third_party/libcurl/`.
+On 2026-10-25, the installed GE-Proton10-12 inside Steam Linux Runtime passed
+real POST player lookup (HTTP 200) and GET export (HTTP 200) with a deliberately
+nonexistent CA filename. Bare-host Wine is not a valid network test environment
+because Wine Schannel requires the runtime GnuTLS libraries. Native Windows and
+actual game UI regression for this development build remain untested.
 `TrueRelative-network.log` records transport, HTTP, cache and parse failures.
 Both it and `TrueRelative.log` rotate before a write would exceed 256 KiB.
 Each retains only one `.old` backup, bounding all four files to 1 MiB in total.
@@ -81,9 +100,21 @@ ambiguous matches remain unknown. `ratings-map.tsv` supports explicit local
 profile-to-account associations. An explicit local account setting overrides
 automatic lookup. Otherwise unmatched local and nearby player profiles are
 looked up asynchronously, with positive and negative claimed-name results cached
-for one day. Other-player mappings are stored in `other-claim-cache.tsv`.
+for 10 minutes for self and one hour for other players. Other-player mappings are stored in `other-claim-cache.tsv`.
 
 ## Verification record and limits
+
+On 2026-10-25, the development build passed the old synthetic menu regression,
+the actual 0.7.6.4B DLL hash/vtable checks plus new-layout player and modal fixtures,
+ratings matching regression, and bounded-log regression. `PluginLoadTest.exe`
+loaded the official DLL without executing its game code, then loaded the actual
+plugin DLL and called its exported Initialize: the expected three menu hooks were
+installed once, the native rating byte was cleared, and repeated initialization
+left the hooks unchanged. Real Schannel export parsing yielded 10,256 records and
+subsequent ETag revalidation returned HTTP 304. Game UI and native Windows testing
+of this development build remain pending. This is an experimental prerelease,
+not a verified fix for network blocking.
+
 
 Before the 0.8.0 release, `sh build.sh` and `python3 test_ratings.py` passed
 under GE-Proton10-12. The fixture suite checks version rejection, player layout,

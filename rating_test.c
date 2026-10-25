@@ -3,6 +3,21 @@
 
 int main(int argc, char **argv)
 {
+    if (argc == 2 && !strcmp(argv[1], "--post")) {
+        GetModuleFileNameA(NULL, ca_path, sizeof(ca_path));
+        char *slash = strrchr(ca_path, '\\');
+        assert(slash);
+        strcpy(slash + 1, "no-ca-bundle-needed.crt");
+        size_t length = 0;
+        char *body = fetch_post_json("https://soku.cleista.cc/api/v1/ratings/players",
+            "{\"names\":[\"mian\"]}", &length);
+        if (!body) { printf("Schannel POST failed: curl=%lu\n", (unsigned long)last_fetch_error); return 2; }
+        assert(curl_init_result == CURLE_OK);
+        assert(strstr(curl_version_info(CURLVERSION_NOW)->ssl_version, "Schannel"));
+        printf("Schannel POST player lookup: OK (%lu bytes)\n", (unsigned long)length);
+        free(body);
+        return 0;
+    }
     if (argc == 2 && !strcmp(argv[1], "--claim")) {
         GetModuleFileNameA(NULL, ca_path, sizeof(ca_path));
         char *slash = strrchr(ca_path, '\\');
@@ -33,7 +48,7 @@ int main(int argc, char **argv)
         puts("Windows queued claimed-name lookup and cache: OK");
         return 0;
     }
-    if (argc == 2 && (!strcmp(argv[1], "--fetch") || !strcmp(argv[1], "--bad-ca"))) {
+    if (argc == 2 && (!strcmp(argv[1], "--fetch") || !strcmp(argv[1], "--system-ca"))) {
         GetModuleFileNameA(NULL, ca_path, sizeof(ca_path));
         char *slash = strrchr(ca_path, '\\');
         assert(slash);
@@ -45,17 +60,20 @@ int main(int argc, char **argv)
         slash[1] = 0;
         strcat(cache_path, "rating-test-cache.json");
         size_t length = 0;
-        bool bad_ca = !strcmp(argv[1], "--bad-ca");
-        if (bad_ca) strcat(ca_path, ".missing");
+        bool system_ca = !strcmp(argv[1], "--system-ca");
+        if (system_ca) strcat(ca_path, ".missing");
         bool not_modified = false;
         char response_etag[128];
         char *json = fetch_curl(&length, &not_modified, response_etag);
-        if (bad_ca) {
-            assert(!json && !length && !not_modified && last_fetch_error != CURLE_OK);
-            puts("HTTPS rejects missing CA bundle: OK");
+        if (!json) { printf("curl failed: %lu\n", (unsigned long)last_fetch_error); return 2; }
+        assert(curl_init_result == CURLE_OK);
+        assert(strstr(curl_version_info(CURLVERSION_NOW)->ssl_version, "Schannel"));
+        if (system_ca) {
+            assert(json && length && last_fetch_error == CURLE_OK);
+            free(json);
+            puts("Schannel HTTPS uses system trust without a bundled CA file: OK");
             return 0;
         }
-        if (!json) { printf("curl failed: %lu\n", (unsigned long)last_fetch_error); return 2; }
         assert(!not_modified && response_etag[0]);
         assert(length > 100000);
         Record *rows = NULL; unsigned count = 0;

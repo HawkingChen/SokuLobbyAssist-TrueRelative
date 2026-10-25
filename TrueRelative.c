@@ -19,9 +19,24 @@
 
 /* Hisoutensoku 1.10a addresses and layouts from SokuDev/SokuLib. No C++ STL
    objects from SokuLobbies or Giuroll are touched across their ABI boundary. */
-/* InLobbyMenu's MSVC RTTI vtable in verified 0.7.5.2 and 0.7.5.4 DLLs.
-   The game MenuConnect vtable is only a router and is not the in-lobby menu. */
-#define LOBBY_MENU_VTABLE_RVA 0x2129a4
+/* Only verified DLL layouts are read; the game MenuConnect table is a router,
+   not the in-lobby menu. Keep each build's offsets together. */
+typedef struct {
+    const char *version;
+    uintptr_t vtable, methods[4];
+    unsigned translate, camera, zoom, connection, me, players, chatting;
+    unsigned emotes, quick_messages;
+    uintptr_t native_ratings;
+} LobbyLayout;
+static const LobbyLayout lobby_layouts[] = {
+    {"0.7.5.2", 0x2129a4, {0x104f60,0x1059b0,0x119d80,0x11bbe0},
+        0x198,0x204,0x20c,0x210,0x138,0x220,0x1154,0,0,0},
+    {"0.7.5.4", 0x2129a4, {0x104f60,0x1059b0,0x119dc0,0x11bc20},
+        0x198,0x204,0x20c,0x210,0x138,0x220,0x1154,0,0,0},
+    {"0.7.6.4B", 0x23c64c, {0x115910,0x1159c0,0x130630,0x1324b0},
+        0x1c0,0x22c,0x234,0x238,0x438,0x26c,0x1334,0x1454,0x1468,0x29998d}
+};
+static const LobbyLayout *lobby_layout = &lobby_layouts[0];
 typedef struct { int horizontalAxis, verticalAxis, a, b, c, d, changeCard, spellcard, pause, select; } GameInput;
 #ifdef TRUE_RELATIVE_TEST_HARNESS
 static IDirect3DDevice9 *harness_device;
@@ -83,6 +98,10 @@ static const BYTE supported_lobby_sha256[][32] = {
   {
     0x52,0x6d,0x84,0x37,0xc0,0x0a,0x85,0xcd,0xbe,0xb5,0x38,0x8e,0xa8,0xbf,0xc1,0x82,
     0x29,0xcb,0x64,0x92,0x78,0xf0,0x79,0xe0,0x00,0xe2,0x79,0x9d,0x5d,0xe5,0x0c,0x87
+  },
+  {
+    0x91,0x43,0x97,0x63,0x74,0x3a,0x01,0x1d,0x01,0x1d,0x77,0x32,0x85,0xe2,0xc1,0x46,
+    0x58,0xfe,0x8b,0xb5,0xbc,0x9b,0x29,0xb0,0x8e,0x8c,0x1e,0x61,0xc4,0x21,0x98,0xc7
   }
 };
 
@@ -106,7 +125,11 @@ static bool supported_lobby(HMODULE module)
     if (ok) ok = CryptGetHashParam(hash, HP_HASHVAL, digest, &length, 0) && length == sizeof(digest);
     bool supported = false;
     if (ok) for (unsigned i = 0; i < sizeof(supported_lobby_sha256) / sizeof(supported_lobby_sha256[0]); ++i)
-        if (!memcmp(digest, supported_lobby_sha256[i], sizeof(digest))) supported = true;
+        if (!memcmp(digest, supported_lobby_sha256[i], sizeof(digest))) {
+            lobby_layout = &lobby_layouts[i];
+            supported = true;
+            break;
+        }
     if (hash) CryptDestroyHash(hash);
     if (provider) CryptReleaseContext(provider, 0);
     fclose(file);
@@ -115,18 +138,24 @@ static bool supported_lobby(HMODULE module)
 
 static bool verified_menu_vtable(void **vtable)
 {
-    static const uintptr_t versions[][4] = {
-        {0x104f60, 0x1059b0, 0x119d80, 0x11bbe0}, /* 0.7.5.2 */
-        {0x104f60, 0x1059b0, 0x119dc0, 0x11bc20}  /* 0.7.5.4 */
-    };
     if (!vtable) return false;
-    for (unsigned build = 0; build < sizeof(versions) / sizeof(versions[0]); ++build) {
-        bool match = true;
-        for (unsigned i = 0; i < 4; ++i)
-            if ((uintptr_t)vtable[i] != (uintptr_t)lobby_module + versions[build][i]) match = false;
-        if (match) return true;
-    }
-    return false;
+    for (unsigned i = 0; i < 4; ++i)
+        if ((uintptr_t)vtable[i] != (uintptr_t)lobby_module + lobby_layout->methods[i]) return false;
+    return true;
+}
+
+/* Native lobby UI settings remain on disk, so disabling this independent mod
+   restores the native behavior on the next game start. No protocol code changes. */
+static void suppress_native_ratings(void)
+{
+    if (lobby_module && lobby_layout->native_ratings)
+        *(volatile BYTE *)((unsigned char *)lobby_module + lobby_layout->native_ratings) = 0;
+}
+static bool lobby_modal_open(const unsigned char *menu)
+{
+    return menu[lobby_layout->chatting] ||
+        (lobby_layout->emotes && menu[lobby_layout->emotes]) ||
+        (lobby_layout->quick_messages && menu[lobby_layout->quick_messages]);
 }
 
 static bool module_directory(HMODULE module, char out[MAX_PATH])
@@ -213,8 +242,8 @@ static bool same_rating_name(const char *first, const char *second)
 static unsigned copy_players(void *menu, VisiblePlayer out[256])
 {
     unsigned char *object = menu;
-    const unsigned char *begin = *(const unsigned char **)(object + 0x220);
-    const unsigned char *end = *(const unsigned char **)(object + 0x224);
+    const unsigned char *begin = *(const unsigned char **)(object + lobby_layout->players);
+    const unsigned char *end = *(const unsigned char **)(object + lobby_layout->players + 4);
     if (!begin || end < begin || (uintptr_t)end - (uintptr_t)begin > 256 * 0x64 ||
         ((uintptr_t)end - (uintptr_t)begin) % 0x64 || !readable(begin, (uintptr_t)end - (uintptr_t)begin)) return 0;
     unsigned n = 0;
@@ -239,9 +268,9 @@ static unsigned copy_players(void *menu, VisiblePlayer out[256])
 }
 static uint32_t local_player_id(const unsigned char *object)
 {
-    const unsigned char *connection = *(const unsigned char *const *)(object + 0x210);
-    if (readable(connection, 0x13c)) {
-        const unsigned char *me = *(const unsigned char *const *)(connection + 0x138);
+    const unsigned char *connection = *(const unsigned char *const *)(object + lobby_layout->connection);
+    if (readable(connection, lobby_layout->me + sizeof(void *))) {
+        const unsigned char *me = *(const unsigned char *const *)(connection + lobby_layout->me);
         if (readable(me, sizeof(uint32_t))) return *(const uint32_t *)me;
     }
     return UINT32_MAX;
@@ -249,8 +278,8 @@ static uint32_t local_player_id(const unsigned char *object)
 static unsigned nearby_players(void *menu, VisiblePlayer players[256], unsigned count, unsigned order[3])
 {
     const unsigned char *object = menu;
-    uint32_t camera_x = *(const uint32_t *)(object + 0x204);
-    uint32_t camera_y = *(const uint32_t *)(object + 0x208);
+    uint32_t camera_x = *(const uint32_t *)(object + lobby_layout->camera);
+    uint32_t camera_y = *(const uint32_t *)(object + lobby_layout->camera + 4);
     /* Measure from the local avatar so the nearest target follows walking even
        when the lobby camera is panned or stops following at map edges. */
     uint32_t local_id = local_player_id(object);
@@ -707,10 +736,10 @@ static void draw_ratings(IDirect3DDevice9 *device, void *menu)
     if (FAILED(IDirect3DDevice9_CreateStateBlock(device, D3DSBT_ALL, &saved))) return;
     if (!ensure_font(device)) { IDirect3DStateBlock9_Release(saved); return; }
     const unsigned char *object = menu;
-    float zoom = *(const float *)(object + 0x20c);
+    float zoom = *(const float *)(object + lobby_layout->zoom);
     if (zoom < 0.99f || zoom > 1.01f) { auto_target_reset(&auto_target); goto done; }
-    int translate_x = *(const int *)(object + 0x198);
-    int translate_y = *(const int *)(object + 0x19c);
+    int translate_x = *(const int *)(object + lobby_layout->translate);
+    int translate_y = *(const int *)(object + lobby_layout->translate + 4);
     uint32_t local_id = local_player_id(object);
     queue_visible_claims(players, count, local_id);
 #ifdef TRUE_RELATIVE_VISUALS
@@ -1000,7 +1029,7 @@ static int __fastcall process_hook(void *menu, void *unused)
     bool f8_down = foreground && (GetAsyncKeyState(VK_F8) & 0x8000);
     bool f9_down = foreground && (GetAsyncKeyState(VK_F9) & 0x8000);
     bool f10_down = foreground && (GetAsyncKeyState(VK_F10) & 0x8000);
-    bool chatting = ((unsigned char *)menu)[0x1154] != 0;
+    bool chatting = lobby_modal_open(menu);
     GameInput saved_input = GAME_INPUT;
     bool was_settings_open = settings_open;
     settings_input(saved_input, foreground, chatting, f9_down,
@@ -1017,7 +1046,9 @@ static int __fastcall process_hook(void *menu, void *unused)
         toggle_auto_off();
     f10_was_down = f10_down;
     if (settings_open || was_settings_open) memset(&GAME_INPUT, 0, sizeof(GameInput));
+    suppress_native_ratings();
     int result = original_process(menu);
+    suppress_native_ratings();
     if (settings_open || was_settings_open) GAME_INPUT = saved_input;
     if (!result) { selected_player_id = UINT32_MAX; auto_target_reset(&auto_target); }
     return result;
@@ -1025,6 +1056,7 @@ static int __fastcall process_hook(void *menu, void *unused)
 static int __fastcall render_hook(void *menu, void *unused)
 {
     (void)unused;
+    suppress_native_ratings();
     int result = original_render(menu);
     draw_ratings(GAME_DEVICE, menu);
     draw_settings(GAME_DEVICE);
@@ -1066,9 +1098,9 @@ __declspec(dllexport) bool Initialize(HMODULE module, HMODULE parent)
     lobby_module = GetModuleHandleA("SokuLobbiesMod.dll");
     if (!lobby_module) { log_line("inactive: SokuLobbiesMod is not loaded"); return true; }
     if (!supported_lobby(lobby_module)) {
-        log_line("inactive: lobby DLL is not a verified Chinese 0.7.5.2 or 0.7.5.4 build"); return true;
+        log_line("inactive: lobby DLL hash is not in the verified compatibility list"); return true;
     }
-    lobby_menu_vtable = (void **)((unsigned char *)lobby_module + LOBBY_MENU_VTABLE_RVA);
+    lobby_menu_vtable = (void **)((unsigned char *)lobby_module + lobby_layout->vtable);
     if (!verified_menu_vtable(lobby_menu_vtable)) {
         log_line("inactive: verified DLL has an unexpected InLobbyMenu vtable"); return true;
     }
@@ -1084,9 +1116,13 @@ __declspec(dllexport) bool Initialize(HMODULE module, HMODULE parent)
         return false;
     }
     installed = true;
+    suppress_native_ratings();
     load_overlay_settings(module);
     ratings_start(module);
-    log_line("installed: compatible with Chinese lobby 0.7.5.2/0.7.5.4");
+    char message[160];
+    snprintf(message, sizeof(message), "installed: verified Chinese lobby %s; native rating UI suppressed=%s; HTTPS=Schannel",
+        lobby_layout->version, lobby_layout->native_ratings ? "yes" : "not present");
+    log_line(message);
     return true;
 }
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
